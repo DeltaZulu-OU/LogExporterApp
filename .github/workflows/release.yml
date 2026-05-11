@@ -1,0 +1,158 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
+
+      - name: Read release metadata from project file
+        id: metadata
+        shell: pwsh
+        run: |
+          $projectPath = "src/$env:APP_NAME.csproj"
+
+          if (-not (Test-Path $projectPath)) {
+            throw "Project file not found at '$projectPath'."
+          }
+
+          [xml]$project = Get-Content $projectPath
+          $version = $project.Project.PropertyGroup.Version | Select-Object -First 1
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to read <Version> from '$projectPath'."
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version '$version' is not a 3-part version. Expected format: major.minor.patch."
+          }
+
+          $tag = "v$version"
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+          Write-Host "App name: $env:APP_NAME"
+          Write-Host "Version: $version"
+          Write-Host "Tag: $tag"
+
+      - name: Validate release tag is new
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.metadata.outputs.tag }}'
+          $existingTag = git ls-remote --tags --refs origin "refs/tags/$tag"
+
+          if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
+            throw "Tag '$tag' already exists. Bump <Version> in src/$env:APP_NAME.csproj before releasing."
+          }
+
+      - name: Replace upstream DLL reference with project reference
+        shell: pwsh
+        run: |
+          $projectPath = 'upstream/DnsServer/DnsServerCore.ApplicationCommon/DnsServerCore.ApplicationCommon.csproj'
+
+          if (-not (Test-Path $projectPath)) {
+            throw "Project file not found at '$projectPath'."
+          }
+
+          $content = Get-Content $projectPath -Raw
+
+          $oldBlock = @(
+            "`t<ItemGroup>"
+            "`t`t<Reference Include=`"TechnitiumLibrary.Net`">"
+            "`t`t`t<HintPath>..\..\TechnitiumLibrary\bin\TechnitiumLibrary.Net.dll</HintPath>"
+            "`t`t`t<Private>false</Private>"
+            "`t`t</Reference>"
+            "`t</ItemGroup>"
+          ) -join "`r`n"
+
+          $newBlock = @(
+            "`t<ItemGroup>"
+            "`t`t<ProjectReference Include=`"..\..\TechnitiumLibrary\TechnitiumLibrary.Net\TechnitiumLibrary.Net.csproj`" />"
+            "`t</ItemGroup>"
+          ) -join "`r`n"
+
+          if (-not $content.Contains($oldBlock)) {
+            $oldBlock = $oldBlock -replace "`r`n", "`n"
+            $newBlock = $newBlock -replace "`r`n", "`n"
+          }
+
+          if (-not $content.Contains($oldBlock)) {
+            throw "Expected TechnitiumLibrary.Net reference block was not found in '$projectPath'."
+          }
+
+          $content = $content.Replace($oldBlock, $newBlock)
+          Set-Content -Path $projectPath -Value $content -NoNewline
+
+          Write-Host "Replaced TechnitiumLibrary.Net DLL reference with ProjectReference."
+
+      - name: Restore and build solution
+        shell: pwsh
+        run: |
+          msbuild "src/$env:APP_NAME.slnx" /restore /p:Configuration=Release /p:Platform="Any CPU" /p:RestorePackagesConfig=true /m
+
+      - name: Prepare release package
+        id: artifacts
+        shell: pwsh
+        run: |
+          $version = '${{ steps.metadata.outputs.version }}'
+
+          $dllPath = "src/bin/Release/$env:APP_NAME.dll"
+          $configPath = 'src/bin/Release/dnsApp.config'
+          $readmePath = 'README.md'
+
+          if (-not (Test-Path $dllPath)) {
+            throw "Built DLL not found at '$dllPath'."
+          }
+
+          if (-not (Test-Path $configPath)) {
+            throw "DNS app config file not found at '$configPath'."
+          }
+
+          if (-not (Test-Path $readmePath)) {
+            throw "README file not found at '$readmePath'."
+          }
+
+          $stagingPath = "release/$env:APP_NAME"
+          $zipPath = "release/$env:APP_NAME-$version.zip"
+
+          New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
+          Copy-Item $dllPath "$stagingPath/$env:APP_NAME.dll"
+          Copy-Item $configPath "$stagingPath/dnsApp.config"
+          Copy-Item $readmePath "$stagingPath/README.md"
+
+          Compress-Archive -Path "$stagingPath/*" -DestinationPath $zipPath -Force
+
+          "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Create and push git tag
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.metadata.outputs.tag }}'
+          git tag $tag
+          git push origin "refs/tags/$tag"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: ${{ env.APP_NAME }} v${{ steps.metadata.outputs.version }}
+          generate_release_notes: true
+          files: ${{ steps.artifacts.outputs.zip_path }}
