@@ -1,1 +1,35 @@
-<Solution />
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+
+  <Folder Name="/src/">
+    <Project Path="LogExporterApp.csproj" >
+      <Platform Solution="*|x64" Project="Any CPU" />
+      <Platform Solution="*|x86" Project="Any CPU" />
+    </Project>
+  </Folder>
+<Folder Name="/upstream/TechnitiumLibrary/">
+    <Project Path="..\upstream\TechnitiumLibrary\TechnitiumLibrary\TechnitiumLibrary.csproj">
+      <Platform Solution="*|x64" Project="Any CPU" />
+      <Platform Solution="*|x86" Project="Any CPU" />
+    </Project>
+    <Project Path="..\upstream\TechnitiumLibrary\TechnitiumLibrary.Net\TechnitiumLibrary.Net.csproj">
+      <Platform Solution="*|x64" Project="Any CPU" />
+      <Platform Solution="*|x86" Project="Any CPU" />
+    </Project>
+    <Project Path="..\upstream\TechnitiumLibrary\TechnitiumLibrary.IO\TechnitiumLibrary.IO.csproj">
+      <Platform Solution="*|x64" Project="Any CPU" />
+      <Platform Solution="*|x86" Project="Any CPU" />
+    </Project>
+  </Folder>
+
+  <Folder Name="/upstream/DnsServer/">
+    <Project Path="..\upstream\DnsServer\DnsServerCore.ApplicationCommon\DnsServerCore.ApplicationCommon.csproj">
+      <Platform Solution="*|x64" Project="Any CPU" />
+      <Platform Solution="*|x86" Project="Any CPU" />
+    </Project>
+  </Folder>
+</Solution>
