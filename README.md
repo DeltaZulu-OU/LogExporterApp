@@ -4,6 +4,8 @@ A plugin that exports DNS query logs to external sinks such as files, HTTP endpo
 
 It maintains an in-memory queue with bulk processing and supports EDNS and optional enrichment layers.
 
+> NOTE: This App is not in main repository as of Technitium DNS Server [v15](https://github.com/TechnitiumSoftware/DnsServer/blob/master/CHANGELOG.md#version-150)
+
 ## Features
 
 * Captures DNS queries and responses using the Technitium DNS `IDnsQueryLogger` interface.
