@@ -114,12 +114,20 @@ jobs:
         run: |
           $version = '${{ steps.metadata.outputs.version }}'
 
-          $dllPath = "src/bin/Release/$env:APP_NAME.dll"
-          $configPath = 'src/bin/Release/dnsApp.config'
+          $outputPath = 'src/bin/Release'
+          $configPath = "$outputPath/dnsApp.config"
           $readmePath = 'README.md'
+          $pdbPath    = "$outputPath/$env:APP_NAME.pdb"
+          $depsPath    = "$outputPath/$env:APP_NAME.deps.json"
 
-          if (-not (Test-Path $dllPath)) {
-            throw "Built DLL not found at '$dllPath'."
+          if (-not (Test-Path $outputPath)) {
+            throw "Build output folder not found at '$outputPath'."
+          }
+
+          $dlls = Get-ChildItem -Path $outputPath -Filter '*.dll' -File
+
+          if (-not $dlls) {
+            throw "No DLL files found in '$outputPath' after excluding DLLs starting with 'Technitium'."
           }
 
           if (-not (Test-Path $configPath)) {
@@ -134,7 +142,9 @@ jobs:
           $zipPath = "release/$env:APP_NAME-$version.zip"
 
           New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
-          Copy-Item $dllPath "$stagingPath/$env:APP_NAME.dll"
+          foreach ($dll in $dlls) { Copy-Item $dll.FullName "$stagingPath/$($dll.Name)" }
+          Copy-Item $pdbPath "$stagingPath/$env:APP_NAME.pdb"
+          Copy-Item $depsPath "$stagingPath/$env:APP_NAME.deps.json"
           Copy-Item $configPath "$stagingPath/dnsApp.config"
           Copy-Item $readmePath "$stagingPath/README.md"
 
