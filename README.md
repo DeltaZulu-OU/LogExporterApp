@@ -1,5 +1,10 @@
 # Log Exporter for Technitium DNS Server
 
+[![Manual Release](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/release.yml/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/release.yml)
+[![CodeQL](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/github-code-scanning/codeql)
+[![Dependabot Updates](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/dependabot/dependabot-updates)
+[![SonarQube](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/build.yml/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/build.yml)
+
 A plugin that exports DNS query logs from [Technitium DNS Server](https://github.com/TechnitiumSoftware/DnsServer) to external sinks such as standard output, files, HTTP endpoints, and Syslog servers.
 
 It uses a bounded asynchronous pipeline: query logs are captured, optionally processed through enrichment stages, and then exported in batches to the configured sinks.
