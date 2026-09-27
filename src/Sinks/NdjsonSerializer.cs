@@ -18,7 +18,7 @@ namespace LogExporter.Sinks
             using Utf8JsonWriter writer = new Utf8JsonWriter(target, new JsonWriterOptions
             {
                 Indented = false,
-                SkipValidation = true,
+                SkipValidation = false,
                 NewLine = "\n"
             });
 
@@ -28,6 +28,7 @@ namespace LogExporter.Sinks
 
                 writer.Flush();
                 target.WriteByte((byte)'\n');
+                writer.Reset();
             }
         }
     }
