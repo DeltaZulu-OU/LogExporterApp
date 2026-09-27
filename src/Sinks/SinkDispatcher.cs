@@ -19,7 +19,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,9 +29,13 @@ namespace LogExporter.Sinks
     {
         #region variables
 
-        private readonly ConcurrentDictionary<Type, IOutputSink> _sinks =
-            new ConcurrentDictionary<Type, IOutputSink>();
+        private readonly object _sync = new object();
+        private readonly Dictionary<Type, IOutputSink> _sinks =
+            new Dictionary<Type, IOutputSink>();
+        private readonly List<IOutputSink> _retiredSinks =
+            new List<IOutputSink>();
 
+        private int _activeDispatches;
         private bool _disposed;
 
         #endregion
@@ -41,19 +44,28 @@ namespace LogExporter.Sinks
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
+            List<IOutputSink>? disposeNow = null;
 
-            _disposed = true;
+            lock (_sync)
+            {
+                if (_disposed)
+                    return;
 
-            // ADR: Once the manager is disposed, all strategies must be disposed and
-            // removed. Leaving them in the dictionary creates a misleading state
-            // (“manager has strategies”) and allows accidental use-after-dispose.
-            // Clearing ensures the manager becomes inert and conveys finality.
-            foreach (KeyValuePair<Type, IOutputSink> entry in _sinks)
-                entry.Value.Dispose();
+                _disposed = true;
 
-            _sinks.Clear();
+                foreach (IOutputSink sink in _sinks.Values)
+                    _retiredSinks.Add(sink);
+
+                _sinks.Clear();
+
+                if (_activeDispatches == 0 && _retiredSinks.Count > 0)
+                {
+                    disposeNow = new List<IOutputSink>(_retiredSinks);
+                    _retiredSinks.Clear();
+                }
+            }
+
+            DisposeSinks(disposeNow);
         }
 
         #endregion
@@ -62,27 +74,46 @@ namespace LogExporter.Sinks
 
         public void Add(IOutputSink sink)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ArgumentNullException.ThrowIfNull(sink);
 
-            if (!_sinks.TryAdd(sink.GetType(), sink))
-                throw new InvalidOperationException(
-                    $"Strategy of type {sink.GetType().Name} already registered.");
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                if (!_sinks.TryAdd(sink.GetType(), sink))
+                    throw new InvalidOperationException(
+                        $"Strategy of type {sink.GetType().Name} already registered.");
+            }
         }
 
         public void Remove(Type type)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ArgumentNullException.ThrowIfNull(type);
 
-            if (_sinks.TryRemove(type, out IOutputSink? existing))
-                existing?.Dispose();
+            IOutputSink? disposeNow = null;
+
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                if (_sinks.Remove(type, out IOutputSink? existing))
+                {
+                    if (_activeDispatches == 0)
+                        disposeNow = existing;
+                    else
+                        _retiredSinks.Add(existing);
+                }
+            }
+
+            disposeNow?.Dispose();
         }
 
         public bool Any()
         {
-            if (_disposed)
-                return false;
-
-            return !_sinks.IsEmpty;
+            lock (_sync)
+            {
+                return !_disposed && _sinks.Count > 0;
+            }
         }
 
         /// <summary>
@@ -95,15 +126,55 @@ namespace LogExporter.Sinks
         /// </summary>
         public async Task DispatchAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
-            if (_disposed || logs == null || logs.Count == 0 || _sinks.IsEmpty)
+            if (logs == null || logs.Count == 0 || token.IsCancellationRequested)
                 return;
 
-            List<Task> tasks = new List<Task>(_sinks.Count);
+            List<IOutputSink> snapshot;
 
-            foreach (IOutputSink sink in _sinks.Values)
-                tasks.Add(sink.ExportAsync(logs, token));
+            lock (_sync)
+            {
+                if (_disposed || _sinks.Count == 0)
+                    return;
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+                snapshot = new List<IOutputSink>(_sinks.Values);
+                _activeDispatches++;
+            }
+
+            List<IOutputSink>? disposeNow = null;
+
+            try
+            {
+                List<Task> tasks = new List<Task>(snapshot.Count);
+
+                foreach (IOutputSink sink in snapshot)
+                    tasks.Add(sink.ExportAsync(logs, token));
+
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_sync)
+                {
+                    _activeDispatches--;
+
+                    if (_activeDispatches == 0 && _retiredSinks.Count > 0)
+                    {
+                        disposeNow = new List<IOutputSink>(_retiredSinks);
+                        _retiredSinks.Clear();
+                    }
+                }
+
+                DisposeSinks(disposeNow);
+            }
+        }
+
+        private static void DisposeSinks(List<IOutputSink>? sinks)
+        {
+            if (sinks is null)
+                return;
+
+            foreach (IOutputSink sink in sinks)
+                sink.Dispose();
         }
 
         #endregion
