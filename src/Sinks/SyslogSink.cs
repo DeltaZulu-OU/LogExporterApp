@@ -35,13 +35,11 @@ namespace LogExporter.Sinks
         #region variables
 
         const string _appName = "Technitium DNS Server";
-        const string _sdId = "meta";
         const string DEFAULT_PROTOCOL = "udp";
         const int DEFAULT_PORT = 514;
 
         readonly Facility _facility = Facility.Local6;
 
-        readonly Rfc5424Formatter _formatter;
         readonly Serilog.Core.Logger _logger;
 
         bool _disposed;
@@ -103,15 +101,6 @@ namespace LogExporter.Sinks
 
                 _ => throw new NotSupportedException("SyslogSink protocol is not supported: " + protocol),
             };
-
-            // Serilog's RFC5424 formatter used as before
-            _formatter = new Rfc5424Formatter(
-                facility: _facility,
-                applicationName: _appName,
-                templateFormatter: null,
-                messageIdPropertyName: _sdId,
-                sourceHost: Environment.MachineName,
-                severityMapping: null);
         }
 
         #endregion
@@ -147,8 +136,7 @@ namespace LogExporter.Sinks
                 if (token.IsCancellationRequested)
                     break;
 
-                string message = _formatter.FormatMessage(Convert(log));
-                _logger.Information(message);
+                _logger.Write(Convert(log));
             }
 
             return Task.CompletedTask;
