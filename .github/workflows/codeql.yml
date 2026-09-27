@@ -4,23 +4,23 @@ on:
   push:
     branches: [master]
     paths:
-    - '**.cs'
-    - '**.csproj'
+      - '**.cs'
+      - '**.csproj'
   pull_request:
     branches: [master]
     paths:
-    - '**.cs'
-    - '**.csproj'
+      - '**.cs'
+      - '**.csproj'
   schedule:
     - cron: '0 8 * * 4'
 
 permissions:
   contents: read
   pull-requests: read
+  security-events: write
 
 jobs:
   analyze:
-
     name: analyze
     runs-on: ubuntu-latest
 
@@ -30,21 +30,19 @@ jobs:
         language: ['csharp']
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
-      with:
-        fetch-depth: 2
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          submodules: recursive
 
-    - run: git checkout HEAD^2
-      if: ${{ github.event_name == 'pull_request' }}
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v4
-      with:
-        languages: ${{ matrix.language }}
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v4
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v4
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
