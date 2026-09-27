@@ -40,12 +40,14 @@ namespace LogExporter
         private readonly PipelineDispatcher _enrichmentDispatcher;
 
         // Stage 1 buffer: transformed LogEntry waiting for enrichment
-        private Channel<LogEntry> _transformChannel = default!;
+        private Channel<LogEntry>? _transformChannel;
 
         // Stage 2 buffer: enriched LogEntry waiting for dispatch
-        private Channel<LogEntry> _enrichedChannel = default!;
+        private Channel<LogEntry>? _enrichedChannel;
 
+        private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
         private Task? _backgroundTask;
+        private CancellationTokenSource? _pipelineCancellation;
         private AppConfig? _config;
         private bool _disposed;
         private IDnsServer? _dnsServer;
@@ -74,134 +76,129 @@ namespace LogExporter
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
-
-            _disposed = true;
-
-            // Stop accepting new entries immediately; cannot throw.
-            _enableLogging = false;
-
-            // Best-effort shutdown: complete input channel so workers drain and exit.
+            _lifecycleLock.Wait();
             try
             {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                _enableLogging = false;
+
                 try
                 {
-                    _transformChannel?.Writer.TryComplete();
+                    StopPipelineAsync().GetAwaiter().GetResult();
                 }
                 catch (Exception ex)
                 {
                     _dnsServer?.WriteLog(ex);
                 }
-            }
-            catch (Exception ex)
-            {
-                _dnsServer?.WriteLog(ex);
-            }
 
-            // Wait for background pipeline to finish.
-            try
-            {
-                _backgroundTask?.GetAwaiter().GetResult();
-            }
-            catch (OperationCanceledException)
-            {
-                // Not expected without explicit cancellation, but safe to ignore.
-            }
-            catch (Exception ex)
-            {
-                _dnsServer?.WriteLog(ex);
-            }
+                try
+                {
+                    _sinkDispatcher.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _dnsServer?.WriteLog(ex);
+                }
 
-            // Dispose sinks and enrichment dispatcher defensively.
-            try
-            {
-                _sinkDispatcher.Dispose();
-            }
-            catch (Exception ex)
-            {
-                _dnsServer?.WriteLog(ex);
-            }
+                try
+                {
+                    _enrichmentDispatcher.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _dnsServer?.WriteLog(ex);
+                }
 
-            try
-            {
-                _enrichmentDispatcher.Dispose();
+                GC.SuppressFinalize(this);
             }
-            catch (Exception ex)
+            finally
             {
-                _dnsServer?.WriteLog(ex);
+                _lifecycleLock.Release();
             }
-
-            GC.SuppressFinalize(this);
         }
 
         #endregion IDisposable
 
         #region public
 
-        public Task InitializeAsync(IDnsServer dnsServer, string config)
+        public async Task InitializeAsync(IDnsServer dnsServer, string config)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-
-            _dnsServer = dnsServer;
-
+            await _lifecycleLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                _config = AppConfig.Deserialize(config)
-                          ?? throw new DnsClientException("Invalid application configuration.");
+                ObjectDisposedException.ThrowIf(_disposed, this);
 
-                ConfigurePipeline();
+                _dnsServer = dnsServer;
 
-                ConfigureSinks();
-            }
-            catch (Exception ex)
-            {
-                // Fail fast but log with context; do not partially initialize pipeline.
-                _dnsServer?.WriteLog(ex);
-                _enableLogging = false;
-                throw;
-            }
+                // A config update reuses this App instance. Stop the current generation
+                // before replacing channels, enrichers, or sinks so workers cannot cross
+                // generations or use resources that are being disposed.
+                await StopPipelineAsync().ConfigureAwait(false);
 
-            // If no sinks exist, never enable logging.
-            if (!_sinkDispatcher.Any())
-            {
-                _enableLogging = false;
-                return Task.CompletedTask;
-            }
-
-            // Stage 1: transform buffer – InsertLogAsync pushes LogEntry here.
-            _transformChannel = Channel.CreateBounded<LogEntry>(
-                new BoundedChannelOptions(_config!.Sinks.MaxQueueSize)
+                try
                 {
-                    SingleReader = true,
-                    SingleWriter = false, // InsertLogAsync may be called concurrently
-                    FullMode = BoundedChannelFullMode.DropWrite
-                });
+                    _config = AppConfig.Deserialize(config)
+                              ?? throw new DnsClientException("Invalid application configuration.");
 
-            // Stage 2: enriched buffer – EnrichLogsAsync pushes here, ExportLogsAsync consumes.
-            _enrichedChannel = Channel.CreateBounded<LogEntry>(
-                new BoundedChannelOptions(_config.Sinks.MaxQueueSize)
+                    ConfigurePipeline();
+                    ConfigureSinks();
+                }
+                catch (Exception ex)
                 {
-                    SingleReader = true,
-                    SingleWriter = true, // only enrichment stage writes
-                    FullMode = BoundedChannelFullMode.DropWrite
-                });
+                    _dnsServer?.WriteLog(ex);
+                    _enableLogging = false;
+                    throw;
+                }
 
-            // Start pipeline workers:
-            //  - EnrichLogsAsync: transform -> enrich
-            //  - ExportLogsAsync: enrich -> output
-            _backgroundTask = Task.WhenAll(
-                Task.Run(EnrichLogsAsync),
-                Task.Run(ExportLogsAsync));
+                if (!_sinkDispatcher.Any())
+                {
+                    _enableLogging = false;
+                    return;
+                }
 
-            // ADR: _enableLogging is intentionally set last so that any caller observing
-            // _enableLogging is true can rely on the entire logging pipeline being fully
-            // constructed (channels and background workers). This prevents subtle race
-            // conditions where concurrent InsertLogAsync calls see "enabled" before internal
-            // structures are ready.
-            _enableLogging = true;
+                Channel<LogEntry> transformChannel = Channel.CreateBounded<LogEntry>(
+                    new BoundedChannelOptions(_config!.Sinks.MaxQueueSize)
+                    {
+                        SingleReader = true,
+                        SingleWriter = false,
+                        FullMode = BoundedChannelFullMode.DropWrite
+                    });
 
-            return Task.CompletedTask;
+                Channel<LogEntry> enrichedChannel = Channel.CreateBounded<LogEntry>(
+                    new BoundedChannelOptions(_config.Sinks.MaxQueueSize)
+                    {
+                        SingleReader = true,
+                        SingleWriter = true,
+                        FullMode = BoundedChannelFullMode.DropWrite
+                    });
+
+                CancellationTokenSource pipelineCancellation = new CancellationTokenSource();
+
+                _transformChannel = transformChannel;
+                _enrichedChannel = enrichedChannel;
+                _pipelineCancellation = pipelineCancellation;
+
+                // Workers capture this generation's channels and cancellation token.
+                // They never re-read mutable channel fields, so an old worker cannot
+                // hop onto replacement channels.
+                _backgroundTask = Task.WhenAll(
+                    Task.Run(() => EnrichLogsAsync(
+                        transformChannel.Reader,
+                        enrichedChannel.Writer,
+                        pipelineCancellation.Token)),
+                    Task.Run(() => ExportLogsAsync(
+                        enrichedChannel.Reader,
+                        pipelineCancellation.Token)));
+
+                _enableLogging = true;
+            }
+            finally
+            {
+                _lifecycleLock.Release();
+            }
         }
 
         // Step 1: input
@@ -209,33 +206,36 @@ namespace LogExporter
             IPEndPoint remoteEP, DnsTransportProtocol protocol,
             DnsDatagram response)
         {
-            if (_enableLogging)
+            if (!_enableLogging)
+                return Task.CompletedTask;
+
+            Channel<LogEntry>? transformChannel = _transformChannel;
+            AppConfig? config = _config;
+            if (transformChannel is null || config is null)
+                return Task.CompletedTask;
+
+            LogEntry entry;
+
+            try
             {
-                LogEntry entry;
+                // input -> transform: build LogEntry
+                entry = new LogEntry(timestamp, remoteEP, protocol, request, response, config.Sinks.EnableEdnsLogging);
+            }
+            catch (Exception ex)
+            {
+                // Malformed packet or unexpected data should not crash the server.
+                _dnsServer?.WriteLog(ex);
+                return Task.CompletedTask;
+            }
 
-                try
-                {
-                    // input -> transform: build LogEntry
-                    entry = new LogEntry(timestamp, remoteEP, protocol, request, response, _config!.Sinks.EnableEdnsLogging);
-                }
-                catch (Exception ex)
-                {
-                    // Malformed packet or unexpected data should not crash the server.
-                    _dnsServer?.WriteLog(ex);
-                    return Task.CompletedTask;
-                }
-
-                try
-                {
-                    if (!_transformChannel.Writer.TryWrite(entry))
-                    {
-                        IncrementDropAndMaybeLog();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _dnsServer?.WriteLog(ex);
-                }
+            try
+            {
+                if (!transformChannel.Writer.TryWrite(entry))
+                    IncrementDropAndMaybeLog();
+            }
+            catch (Exception ex)
+            {
+                _dnsServer?.WriteLog(ex);
             }
 
             return Task.CompletedTask;
@@ -245,15 +245,51 @@ namespace LogExporter
 
         #region private
 
+        private async Task StopPipelineAsync()
+        {
+            _enableLogging = false;
+
+            Channel<LogEntry>? transformChannel = _transformChannel;
+            Task? backgroundTask = _backgroundTask;
+            CancellationTokenSource? pipelineCancellation = _pipelineCancellation;
+
+            _transformChannel = null;
+            _enrichedChannel = null;
+            _backgroundTask = null;
+            _pipelineCancellation = null;
+
+            transformChannel?.Writer.TryComplete();
+            pipelineCancellation?.Cancel();
+
+            try
+            {
+                if (backgroundTask is not null)
+                    await backgroundTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (pipelineCancellation?.IsCancellationRequested is true)
+            {
+                // Expected when stopping a pipeline generation.
+            }
+            finally
+            {
+                pipelineCancellation?.Dispose();
+            }
+        }
+
         // Step 2: EnrichLogsAsync – transform -> enrich
-        private async Task EnrichLogsAsync()
+        private async Task EnrichLogsAsync(
+            ChannelReader<LogEntry> transformReader,
+            ChannelWriter<LogEntry> enrichedWriter,
+            CancellationToken token)
         {
             try
             {
-                while (await _transformChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+                while (await transformReader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
-                    while (_transformChannel.Reader.TryRead(out LogEntry? entry))
+                    while (transformReader.TryRead(out LogEntry? entry))
                     {
+                        token.ThrowIfCancellationRequested();
+
                         // If there is no question, most enrichers cannot do anything.
                         if (entry.Question != null && _enrichmentDispatcher.Any())
                         {
@@ -270,7 +306,7 @@ namespace LogExporter
 
                         try
                         {
-                            if (!_enrichedChannel.Writer.TryWrite(entry))
+                            if (!enrichedWriter.TryWrite(entry))
                             {
                                 IncrementDropAndMaybeLog();
                             }
@@ -282,6 +318,10 @@ namespace LogExporter
                     }
                 }
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Expected when stopping a pipeline generation.
+            }
             catch (Exception ex)
             {
                 _dnsServer?.WriteLog(ex);
@@ -291,7 +331,7 @@ namespace LogExporter
                 // Signal no more enriched entries will be produced.
                 try
                 {
-                    _enrichedChannel.Writer.TryComplete();
+                    enrichedWriter.TryComplete();
                 }
                 catch (Exception ex)
                 {
@@ -301,18 +341,19 @@ namespace LogExporter
         }
 
         // Step 3: ExportLogsAsync – pipeline -> output
-        private async Task ExportLogsAsync()
+        private async Task ExportLogsAsync(ChannelReader<LogEntry> enrichedReader, CancellationToken token)
         {
             // ADR: Reuse this list buffer to avoid GC churn during high-volume logging.
             List<LogEntry> batch = new List<LogEntry>(BULK_INSERT_COUNT);
 
             try
             {
-                while (await _enrichedChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+                while (await enrichedReader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
                     while (batch.Count < BULK_INSERT_COUNT &&
-                           _enrichedChannel.Reader.TryRead(out LogEntry? entry))
+                           enrichedReader.TryRead(out LogEntry? entry))
                     {
+                        token.ThrowIfCancellationRequested();
                         batch.Add(entry);
                     }
 
@@ -321,8 +362,12 @@ namespace LogExporter
                         try
                         {
                             await _sinkDispatcher
-                                .DispatchAsync(batch, CancellationToken.None)
+                                .DispatchAsync(batch, token)
                                 .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested)
+                        {
+                            return;
                         }
                         catch (Exception ex)
                         {
@@ -335,6 +380,10 @@ namespace LogExporter
                         }
                     }
                 }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Expected when stopping a pipeline generation.
             }
             catch (Exception ex)
             {
