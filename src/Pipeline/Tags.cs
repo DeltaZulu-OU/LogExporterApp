@@ -33,8 +33,8 @@ namespace LogExporter.Pipeline
 
         public void Process(LogEntry logEntry) => logEntry.Meta["tags"] = _tags;
 
-        public void Dispose() =>
-            // If DomainCache ever needs disposal, do it here.
-            GC.SuppressFinalize(this);
+        public void Dispose()
+        {
+        }
     }
 }

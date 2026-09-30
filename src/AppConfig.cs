@@ -23,7 +23,6 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TechnitiumLibrary.Net.Dns;
-using static LogExporter.SinkConfig;
 
 namespace LogExporter
 {
@@ -112,7 +111,6 @@ namespace LogExporter
     public class SinkConfig
     {
         [Range(1, int.MaxValue, ErrorMessage = "maxQueueSize must be greater than zero.")]
-
         [JsonPropertyName("maxQueueSize")]
         public int MaxQueueSize { get; set; } = 100000;
 
@@ -181,7 +179,7 @@ namespace LogExporter
         {
             [Required(ErrorMessage = "tags are required when tagging is enabled.")]
             [JsonPropertyName("tags")]
-            public List<string> Tags { get; set; } = new List<string>();
+            public List<string> Tags { get; set; } = new();
         }
 
     }

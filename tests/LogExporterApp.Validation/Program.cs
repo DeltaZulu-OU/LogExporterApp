@@ -398,6 +398,18 @@ internal static class Program
 
     private static LogEntry CreateLogEntry(string name)
     {
+        var (request, response) = CreateDnsExchange(name);
+
+        return new LogEntry(
+            DateTime.UtcNow,
+            new IPEndPoint(IPAddress.Loopback, 53000),
+            DnsTransportProtocol.Udp,
+            request,
+            response);
+    }
+
+    private static (DnsDatagram Request, DnsDatagram Response) CreateDnsExchange(string name)
+    {
         var question = new DnsQuestionRecord(
             name,
             DnsResourceRecordType.A,
@@ -431,12 +443,7 @@ internal static class Program
             DnsResponseCode.NoError,
             [question]);
 
-        return new LogEntry(
-            DateTime.UtcNow,
-            new IPEndPoint(IPAddress.Loopback, 53000),
-            DnsTransportProtocol.Udp,
-            request,
-            response);
+        return (request, response);
     }
 
     private static async Task DomainCacheDoesNotBlockOrCacheBeforeParserIsReadyAsync()
@@ -629,38 +636,7 @@ internal static class Program
 
     private static async Task InsertAsync(App app, string name)
     {
-        var question = new DnsQuestionRecord(
-            name,
-            DnsResourceRecordType.A,
-            DnsClass.IN);
-
-        var request = new DnsDatagram(
-            1,
-            false,
-            DnsOpcode.StandardQuery,
-            false,
-            false,
-            true,
-            false,
-            false,
-            false,
-            DnsResponseCode.NoError,
-            [question]);
-
-        request.SetMetadata(new NameServerAddress(IPAddress.Loopback));
-
-        var response = new DnsDatagram(
-            1,
-            true,
-            DnsOpcode.StandardQuery,
-            false,
-            false,
-            true,
-            true,
-            false,
-            false,
-            DnsResponseCode.NoError,
-            [question]);
+        var (request, response) = CreateDnsExchange(name);
 
         await app.InsertLogAsync(
             DateTime.UtcNow,
