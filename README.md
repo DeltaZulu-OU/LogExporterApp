@@ -13,7 +13,7 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 ## Features
 
 - Captures DNS queries and responses through the Technitium DNS Server `IDnsQueryLogger` interface.
-- Uses a two-stage bounded pipeline for processing and export, preventing unbounded memory growth under load.
+- Uses bounded processing stages and an independent bounded ingress queue for each sink, preventing one slow sink from blocking the others or causing unbounded memory growth.
 - Exports logs through pluggable sinks: console, file, HTTP POST, and Syslog.
 - Supports optional pipeline processors before export:
   - domain normalization with Public Suffix List based metadata;
@@ -25,7 +25,9 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 
 ## Configuration
 
-> Note that the condiguration differs from the `LogExporterApp` in the Tehnitium DNS Server App Store. Therefore, you cannot use the same configuration.
+> Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
+>
+> The top-level `sinks` and `pipeline` objects are required. Individual sink and pipeline sections are optional: if a section is omitted, that feature is treated as disabled. If a section is present, `enabled` defaults to `true` unless explicitly set to `false`.
 
 Provide JSON configuration similar to the following:
 
@@ -46,8 +48,7 @@ Provide JSON configuration similar to the following:
       "endpoint": "https://collector.example.com/dns",
       "headers": {
         "Authorization": "Bearer token"
-      },
-      "ndjson": true
+      }
     },
     "syslog": {
       "enabled": false,
@@ -72,21 +73,38 @@ Provide JSON configuration similar to the following:
 
 ### Sink options
 
-* `maxQueueSize` sets the capacity of each bounded pipeline stage. When a stage is full, new entries are dropped instead of allowing memory usage to grow without limit.
+* `maxQueueSize` sets the capacity, in log entries, of the bounded processing stages and of each sink's independent ingress queue. When a queue is full, new entries for that queue are dropped instead of allowing memory usage to grow without limit.
 * `enableEdnsLogging` controls whether EDNS Extended DNS Error data is included in exported logs.
 * `console` writes logs to standard output, which is useful for containerized deployments and debugging.
 * `file` writes logs to the configured local file path.
-* `http` sends logs to the configured endpoint using HTTP POST. When `ndjson` is `true`, batches are sent as newline-delimited JSON.
+* `http` sends batches to the configured endpoint using HTTP POST as newline-delimited JSON (NDJSON). HTTP records include the responding server's hostname.
 * `syslog` exports logs to a Syslog server. Supported protocols are `UDP`, `TCP`, `TLS`, and `LOCAL`.
   * `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it. `LOCAL` ignores `address`.
   * An FQDN is resolved once the DNS server starts answering queries, not while the app loads, and resolution is retried briefly if it fails. With `UDP`, the resolved address is kept until the configuration is saved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
 
-At least one sink must be enabled. If no sink is configured, logging remains disabled.
+Individual sink sections may be omitted entirely. An omitted sink is disabled. When a sink section is present, its sink-specific required values are validated only if that sink is enabled. For example, a disabled or omitted HTTP sink does not require an `endpoint`.
+
+At least one sink must be enabled for logs to be exported. If no sink is enabled, logging remains disabled.
+
+A minimal console-only configuration is therefore valid:
+
+```json
+{
+  "sinks": {
+    "console": {
+      "enabled": true
+    }
+  },
+  "pipeline": {}
+}
+```
 
 ### Pipeline options
 
 * `normalize` adds parsed domain metadata under `meta.domainInfo`.
 * `tagging` adds the configured static tags under `meta.tags`.
+
+Pipeline sections may also be omitted. An omitted processor is disabled.
 
 The normalization stage uses the Public Suffix List to derive domain structure. PSL loading is best-effort: if the list cannot be obtained, logging continues and the normalization output is simply unavailable for affected entries.
 
@@ -169,7 +187,7 @@ Formatted for easier review:
 
 ## Operational notes
 
-* The app uses bounded channels rather than an unbounded queue. Under sustained overload, it drops new entries and reports the drop count periodically instead of consuming memory indefinitely.
+* The app uses bounded channels rather than unbounded queues. Each sink has its own ingress queue and worker, so a slow or unavailable sink does not block the other sinks. Under sustained overload, only the full queue drops new entries and reports the drop count periodically.
 * The normalization cache uses Public Suffix List based parsing and is optimized for DNS-style query patterns where many domains may be seen only once.
 * EDNS logging records Extended DNS Error data when enabled and parses malformed EDE payloads defensively so they do not break the logging pipeline.
 * Static tags are intended for downstream processing, for example tenant labels, environment labels, or collector-side routing keys.

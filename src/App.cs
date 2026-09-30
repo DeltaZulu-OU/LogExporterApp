@@ -471,7 +471,7 @@ namespace LogExporter
             {
                 AppConfig.ValidateObject(config);
                 _sinkDispatcher.Add(
-                    new FileSink(config.Path),
+                    new FileSink(config.Path!),
                     queueCapacity,
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
@@ -514,7 +514,7 @@ namespace LogExporter
             {
                 AppConfig.ValidateObject(config);
                 _sinkDispatcher.Add(
-                    new HttpSink(config.Endpoint, config.Headers),
+                    new HttpSink(config.Endpoint!, config.Headers),
                     queueCapacity,
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
@@ -547,7 +547,7 @@ namespace LogExporter
                 AppConfig.ValidateObject(config);
                 // Host name resolution is deferred until the DNS server is serving; see SyslogSink.
                 _sinkDispatcher.Add(
-                    new SyslogSink(config.Address,
+                    new SyslogSink(config.Address!,
                                    config.Port,
                                    config.Protocol,
                                    _dnsServerReady.Task,

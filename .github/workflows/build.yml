@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
+
+      - name: Replace upstream DLL reference with project reference
+        shell: pwsh
+        run: |
+          $projectPath = 'upstream/DnsServer/DnsServerCore.ApplicationCommon/DnsServerCore.ApplicationCommon.csproj'
+
+          if (-not (Test-Path $projectPath)) {
+            throw "Project file not found at '$projectPath'."
+          }
+
+          $content = Get-Content $projectPath -Raw
+
+          $oldBlock = @(
+            "`t<ItemGroup>"
+            "`t`t<Reference Include=`"TechnitiumLibrary.Net`">"
+            "`t`t`t<HintPath>..\..\TechnitiumLibrary\bin\TechnitiumLibrary.Net.dll</HintPath>"
+            "`t`t`t<Private>false</Private>"
+            "`t`t</Reference>"
+            "`t</ItemGroup>"
+          ) -join "`r`n"
+
+          $newBlock = @(
+            "`t<ItemGroup>"
+            "`t`t<ProjectReference Include=`"..\..\TechnitiumLibrary\TechnitiumLibrary.Net\TechnitiumLibrary.Net.csproj`" />"
+            "`t</ItemGroup>"
+          ) -join "`r`n"
+
+          if (-not $content.Contains($oldBlock)) {
+            $oldBlock = $oldBlock -replace "`r`n", "`n"
+            $newBlock = $newBlock -replace "`r`n", "`n"
+          }
+
+          if (-not $content.Contains($oldBlock)) {
+            throw "Expected TechnitiumLibrary.Net reference block was not found in '$projectPath'."
+          }
+
+          $content = $content.Replace($oldBlock, $newBlock)
+          Set-Content -Path $projectPath -Value $content -NoNewline
+
+      - name: Restore and build solution
+        shell: pwsh
+        run: |
+          msbuild "src/LogExporterApp.slnx" /restore /p:Configuration=Release /p:Platform="Any CPU" /p:RestorePackagesConfig=true /m
