@@ -11,7 +11,12 @@
       <Platform Solution="*|x86" Project="Any CPU" />
     </Project>
   </Folder>
-<Folder Name="/upstream/TechnitiumLibrary/">
+
+  <Folder Name="/tests/">
+    <Project Path="..\tests\LogExporterApp.Tests\LogExporterApp.Tests.csproj" />
+  </Folder>
+
+  <Folder Name="/upstream/TechnitiumLibrary/">
     <Project Path="..\upstream\TechnitiumLibrary\TechnitiumLibrary\TechnitiumLibrary.csproj">
       <Platform Solution="*|x64" Project="Any CPU" />
       <Platform Solution="*|x86" Project="Any CPU" />
