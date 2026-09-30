@@ -22,6 +22,7 @@ using Nager.PublicSuffix.RuleProviders;
 using Nager.PublicSuffix.RuleProviders.CacheProviders;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -221,17 +222,18 @@ namespace LogExporter.Pipeline
 
                     while (_cache.Count >= MaxSize)
                     {
-                        Evict();
+                        EvictLocked();
                     }
 
                     var newNode = new CacheNode(key, domain);
-                    InsertAtHead(newNode);
+                    InsertAtHeadLocked(newNode);
                     _cache[key] = newNode;
                 }
             }
 
-            private void InsertAtHead(CacheNode node)
+            private void InsertAtHeadLocked(CacheNode node)
             {
+                AssertEvictionLockHeld();
                 node.Next = _head;
                 node.Prev = null;
 
@@ -244,8 +246,9 @@ namespace LogExporter.Pipeline
                 _hand ??= node;
             }
 
-            private void Evict()
+            private void EvictLocked()
             {
+                AssertEvictionLockHeld();
                 _hand ??= _tail;
 
                 while (_hand != null)
@@ -254,7 +257,7 @@ namespace LogExporter.Pipeline
                     {
                         var victim = _hand;
                         _hand = _hand.Prev ?? _tail;
-                        RemoveNode(victim);
+                        RemoveNodeLocked(victim);
                         _cache.TryRemove(victim.Key, out _);
                         return;
                     }
@@ -264,8 +267,9 @@ namespace LogExporter.Pipeline
                 }
             }
 
-            private void RemoveNode(CacheNode node)
+            private void RemoveNodeLocked(CacheNode node)
             {
+                AssertEvictionLockHeld();
                 if (node.Prev != null)
                 {
                     node.Prev.Next = node.Next;
@@ -288,6 +292,14 @@ namespace LogExporter.Pipeline
                 {
                     _hand = node.Prev ?? _tail;
                 }
+            }
+
+            [Conditional("DEBUG")]
+            private void AssertEvictionLockHeld()
+            {
+                Debug.Assert(
+                    _evictionLock.IsHeldByCurrentThread,
+                    "DomainCache mutation requires _evictionLock.");
             }
 
             private class CacheNode

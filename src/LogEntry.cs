@@ -160,7 +160,7 @@ namespace LogExporter
 
         public string ClientIp { get; }
 
-        public EDNSLog[] EDNS { get; private set; }
+        public EDNSLog[] EDNS { get; }
 
         public string NameServer { get; }
 
@@ -170,7 +170,7 @@ namespace LogExporter
 
         public DnsResponseCode ResponseCode { get; }
 
-        public double? ResponseRtt { get; private set; }
+        public double? ResponseRtt { get; }
 
         public DnsServerResponseType ResponseType { get; }
 

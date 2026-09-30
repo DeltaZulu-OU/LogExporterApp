@@ -119,7 +119,7 @@ namespace LogExporter.Sinks
         {
             ArgumentNullException.ThrowIfNull(type);
 
-            SinkWorker? worker = null;
+            SinkWorker? worker;
 
             lock (_sync)
             {
@@ -205,7 +205,7 @@ namespace LogExporter.Sinks
             private long _droppedEvents;
             private long _lastDropTicks = DateTime.UtcNow.Ticks;
             private long _lastErrorTicks;
-            private bool _disposed;
+            private int _disposed;
 
             public SinkWorker(
                 IOutputSink sink,
@@ -233,7 +233,7 @@ namespace LogExporter.Sinks
 
             public void Enqueue(IReadOnlyList<LogEntry> logs)
             {
-                if (_disposed)
+                if (Volatile.Read(ref _disposed) != 0)
                 {
                     return;
                 }
@@ -248,12 +248,11 @@ namespace LogExporter.Sinks
 
             public void Dispose()
             {
-                if (_disposed)
+                if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 {
                     return;
                 }
 
-                _disposed = true;
                 Complete();
 
                 try

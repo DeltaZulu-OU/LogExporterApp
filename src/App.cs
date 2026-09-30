@@ -57,7 +57,7 @@ namespace LogExporter
         private Task? _backgroundTask;
         private CancellationTokenSource? _pipelineCancellation;
         private AppConfig? _config;
-        private bool _disposed;
+        private int _disposed;
         private IDnsServer? _dnsServer;
 
         private long _droppedCount;
@@ -96,16 +96,14 @@ namespace LogExporter
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
             _lifecycleLock.Wait();
             try
             {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                _disposed = true;
-
                 try
                 {
                     StopPipelineAsync().GetAwaiter().GetResult();
@@ -149,7 +147,7 @@ namespace LogExporter
             await _lifecycleLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                ObjectDisposedException.ThrowIf(_disposed, this);
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
                 _dnsServer = dnsServer;
 
@@ -283,11 +281,8 @@ namespace LogExporter
         private async Task StopPipelineAsync()
         {
             var ingestionState = Interlocked.Exchange(ref _ingestionState, null);
-            var backgroundTask = _backgroundTask;
-            var pipelineCancellation = _pipelineCancellation;
-
-            _backgroundTask = null;
-            _pipelineCancellation = null;
+            var backgroundTask = Interlocked.Exchange(ref _backgroundTask, null);
+            var pipelineCancellation = Interlocked.Exchange(ref _pipelineCancellation, null);
 
             // Completing the input channel lets both workers drain accepted entries in order.
             // Cancellation is reserved for a future forced-abort path; normal stop is graceful.
