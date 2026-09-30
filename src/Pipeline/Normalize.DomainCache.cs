@@ -53,7 +53,9 @@ namespace LogExporter.Pipeline
 
             // ADR: PSL loading is best-effort and must never block the enrichment consumer.
             private static readonly HttpClient _pslHttpClient = new HttpClient();
-            private static readonly Task<DomainParser?> _parserTask = InitializeParserAsync();
+            private static readonly Task<DomainParser?> _defaultParserTask = InitializeParserAsync();
+
+            private readonly Task<DomainParser?> _parserTask;
 
             private readonly ConcurrentDictionary<string, CacheNode> _cache =
                 new ConcurrentDictionary<string, CacheNode>(StringComparer.OrdinalIgnoreCase);
@@ -65,6 +67,21 @@ namespace LogExporter.Pipeline
             private CacheNode? _head;
             private CacheNode? _tail;
             private CacheNode? _hand;
+            #endregion
+
+            #region constructor
+
+            public DomainCache()
+                : this(_defaultParserTask)
+            {
+            }
+
+            internal DomainCache(Task<DomainParser?> parserTask)
+            {
+                ArgumentNullException.ThrowIfNull(parserTask);
+                _parserTask = parserTask;
+            }
+
             #endregion
 
             #region public
@@ -168,7 +185,7 @@ namespace LogExporter.Pipeline
                 return false;
             }
 
-            private static bool TryParse(string name, out DomainInfo domain)
+            private bool TryParse(string name, out DomainInfo domain)
             {
                 if (!_parserTask.IsCompletedSuccessfully)
                 {

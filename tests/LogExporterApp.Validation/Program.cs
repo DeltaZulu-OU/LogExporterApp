@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using LogExporter.Sinks;
 using LogExporter.Pipeline;
+using Nager.PublicSuffix;
+using Nager.PublicSuffix.RuleProviders;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
@@ -30,6 +32,8 @@ internal static class Program
         PipelineProcessorsRunInRegistrationOrder();
         DuplicatePipelineProcessorTypesAreRejected();
         RemoveAndReAddMovesProcessorToEnd();
+
+        await DomainCacheDoesNotBlockOrCacheBeforeParserIsReadyAsync();
 
         Console.WriteLine("LogExporter lifecycle validation passed.");
     }
@@ -362,6 +366,56 @@ internal static class Program
             DnsTransportProtocol.Udp,
             request,
             response);
+    }
+
+    private static async Task DomainCacheDoesNotBlockOrCacheBeforeParserIsReadyAsync()
+    {
+        var parserSource = new TaskCompletionSource<DomainParser?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var cache = new Normalize.DomainCache(parserSource.Task);
+        const string domainName = "www.example.com";
+
+        var pendingLookup = Task.Run(() => cache.GetOrAdd(domainName));
+        var beforeReady = await pendingLookup.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert(beforeReady.RegistrableDomain is null,
+            "DomainCache produced parsed metadata before the parser was ready.");
+
+        var directory = CreateTempDirectory();
+        var rulesPath = Path.Combine(directory, "public_suffix_list.dat");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rulesPath,
+                """
+                // ===BEGIN ICANN DOMAINS===
+                com
+                org
+                co.uk
+                // ===END ICANN DOMAINS===
+                """);
+
+            var ruleProvider = new LocalFileRuleProvider(rulesPath);
+            await ruleProvider.BuildAsync();
+
+            parserSource.TrySetResult(new DomainParser(ruleProvider));
+
+            var afterReady = cache.GetOrAdd(domainName);
+
+            Assert(afterReady.RegistrableDomain == "example.com",
+                "DomainCache did not begin parsing after the PSL parser became ready.");
+            Assert(afterReady.Domain == "example",
+                "DomainCache returned unexpected parsed domain metadata.");
+
+            var normalizedLookup = cache.GetOrAdd("WWW.EXAMPLE.COM.");
+            Assert(normalizedLookup.RegistrableDomain == "example.com",
+                "DomainCache normalization failed after parser initialization.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static async Task InsertAsync(App app, string name)
