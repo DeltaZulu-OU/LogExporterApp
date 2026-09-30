@@ -55,6 +55,7 @@ namespace LogExporter
             ValidateObject(config);
             ValidateObject(config.Sinks);
             ValidateObject(config.Pipeline);
+            ValidateEnabledFeatures(config);
 
             return config;
         }
@@ -63,6 +64,43 @@ namespace LogExporter
         {
             var ctx = new ValidationContext(instance);
             Validator.ValidateObject(instance, ctx, validateAllProperties: true);
+        }
+
+        private static void ValidateEnabledFeatures(AppConfig config)
+        {
+            if (config.Sinks.FileSinkConfig?.Enabled is true)
+            {
+                ValidateObject(config.Sinks.FileSinkConfig);
+            }
+
+            if (config.Sinks.HttpSinkConfig?.Enabled is true)
+            {
+                ValidateObject(config.Sinks.HttpSinkConfig);
+            }
+
+            if (config.Sinks.SyslogSinkConfig?.Enabled is true)
+            {
+                var syslog = config.Sinks.SyslogSinkConfig;
+                ValidateObject(syslog);
+
+                if (string.IsNullOrWhiteSpace(syslog.Protocol))
+                {
+                    throw new ValidationException(
+                        "syslog.protocol is required when syslog logging is enabled.");
+                }
+
+                if (!syslog.Protocol.Equals("LOCAL", System.StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(syslog.Address))
+                {
+                    throw new ValidationException(
+                        "syslog.address is required for UDP, TCP, and TLS syslog logging.");
+                }
+            }
+
+            if (config.Pipeline.TaggingProcessConfig?.Enabled is true)
+            {
+                ValidateObject(config.Pipeline.TaggingProcessConfig);
+            }
         }
     }
     public class FeatureBase
