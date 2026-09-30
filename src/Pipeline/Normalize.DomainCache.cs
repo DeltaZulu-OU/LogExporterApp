@@ -24,6 +24,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace LogExporter.Pipeline
 {
@@ -49,20 +50,9 @@ namespace LogExporter.Pipeline
             private const int StringPoolMaxSize = 10000;
             private static readonly DomainInfo Empty = new DomainInfo();
 
-            // ADR: Loading the PSL must not block or fail plugin startup. We defer
-            // initialization and make it best-effort to avoid network dependencies.
-            private static readonly Lazy<DomainParser?> _parser = new Lazy<DomainParser?>(InitializeParser);
-
+            // ADR: PSL loading is best-effort and must never block the enrichment consumer.
             private static readonly HttpClient _pslHttpClient = new HttpClient();
-
-            private static readonly Lazy<CachedHttpRuleProvider> _sharedRuleProvider =
-                new Lazy<CachedHttpRuleProvider>(static () =>
-                {
-                    var cacheProvider = new LocalFileSystemCacheProvider();
-                    var rp = new CachedHttpRuleProvider(cacheProvider, _pslHttpClient);
-                    rp.BuildAsync().GetAwaiter().GetResult();
-                    return rp;
-                }, isThreadSafe: true);
+            private static readonly Task<DomainParser?> _parserTask = InitializeParserAsync();
 
             private readonly ConcurrentDictionary<string, CacheNode> _cache =
                 new ConcurrentDictionary<string, CacheNode>(StringComparer.OrdinalIgnoreCase);
@@ -102,7 +92,11 @@ namespace LogExporter.Pipeline
                     return node.Domain;
                 }
 
-                var domain = Parse(domainName);
+                if (!TryParse(domainName, out var domain))
+                {
+                    return Empty;
+                }
+
                 AddToCache(normalizedName, domain);
                 return domain;
             }
@@ -173,37 +167,42 @@ namespace LogExporter.Pipeline
                 return false;
             }
 
-            private static DomainInfo Parse(string name)
+            private static bool TryParse(string name, out DomainInfo domain)
             {
-                var parser = _parser.Value;
+                if (!_parserTask.IsCompletedSuccessfully)
+                {
+                    domain = Empty;
+                    return false;
+                }
+
+                var parser = _parserTask.Result;
                 if (parser == null)
                 {
-                    return Empty;
+                    domain = Empty;
+                    return true;
                 }
 
                 try
                 {
-                    return parser.Parse(name) ?? Empty;
+                    domain = parser.Parse(name) ?? Empty;
                 }
                 catch
                 {
                     // Parsing errors are intentionally ignored because PSL is optional.
-                    return Empty;
+                    domain = Empty;
                 }
+
+                return true;
             }
 
-            private static DomainParser? InitializeParser()
+            private static async Task<DomainParser?> InitializeParserAsync()
             {
-                // ADR: The PSL download via SimpleHttpRuleProvider performs outbound HTTP.
-                // Relying on external network connectivity at plugin startup is unsafe in
-                // production DNS environments (offline appliances, firewalled networks,
-                // corporate proxies). Initialization must never block or fail due to PSL
-                // retrieval. We therefore treat PSL availability as optional:
-                //   - If the download succeeds, domain parsing is enriched.
-                //   - If it fails, we return null and logging continues without PSL data.
                 try
                 {
-                    return new DomainParser(_sharedRuleProvider.Value);
+                    var cacheProvider = new LocalFileSystemCacheProvider();
+                    var ruleProvider = new CachedHttpRuleProvider(cacheProvider, _pslHttpClient);
+                    await ruleProvider.BuildAsync().ConfigureAwait(false);
+                    return new DomainParser(ruleProvider);
                 }
                 catch
                 {

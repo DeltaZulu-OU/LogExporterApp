@@ -20,7 +20,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 using DnsServerCore.ApplicationCommon;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -72,8 +71,12 @@ namespace LogExporter
             // Convert answer section - reuse empty list when no answers
             if (response.Answer.Count > 0)
             {
-                Answers = new List<DnsResourceRecord>(
-                    response.Answer.Select(record => new DnsResourceRecord
+                var answers = new DnsResourceRecord[response.Answer.Count];
+
+                for (var i = 0; i < response.Answer.Count; i++)
+                {
+                    var record = response.Answer[i];
+                    answers[i] = new DnsResourceRecord
                     {
                         Name = record.Name,
                         RecordType = record.Type,
@@ -81,7 +84,10 @@ namespace LogExporter
                         RecordTtl = record.TTL,
                         RecordData = record.RDATA.ToString(),
                         DnssecStatus = record.DnssecStatus,
-                    })).ToArray();
+                    };
+                }
+
+                Answers = answers;
             }
             else
             {
@@ -101,15 +107,15 @@ namespace LogExporter
 
         private EDNSLog[] PopulateEDNSLogs(DnsDatagram response)
         {
-            var ednsErrors = response.EDNS.Options.Where(o => o.Code == EDnsOptionCode.EXTENDED_DNS_ERROR).ToList();
-            if (ednsErrors.Count == 0)
-            {
-                return EmptyEdns;
-            }
+            List<EDNSLog>? edns = null;
 
-            var edns = new List<EDNSLog>(ednsErrors.Count);
-            foreach (var extendedErrorLog in ednsErrors)
+            foreach (var extendedErrorLog in response.EDNS.Options)
             {
+                if (extendedErrorLog.Code != EDnsOptionCode.EXTENDED_DNS_ERROR)
+                {
+                    continue;
+                }
+
                 // ADR: EDNS extended error comes from network input and may not follow
                 // the expected "type: message" format. Previously this code assumed
                 // a well-formed structure and could throw IndexOutOfRangeException,
@@ -139,6 +145,7 @@ namespace LogExporter
                     message = raw;
                 }
 
+                edns ??= new List<EDNSLog>();
                 edns.Add(new EDNSLog
                 {
                     ErrType = errType,
@@ -146,8 +153,7 @@ namespace LogExporter
                 });
             }
 
-            // If no valid EDNS entries were added, use the empty list
-            return edns.Count > 0 ? edns.ToArray() : EmptyEdns;
+            return edns?.ToArray() ?? EmptyEdns;
         }
 
         public DnsResourceRecord[] Answers { get; }

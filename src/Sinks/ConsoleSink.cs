@@ -60,9 +60,7 @@ namespace LogExporter.Sinks
             NdjsonSerializer.WriteBatch(ms, logs);
 
             ms.Position = 0;
-
             await ms.CopyToAsync(_stdout, token).ConfigureAwait(false);
-            await _stdout.FlushAsync(token).ConfigureAwait(false);
         }
     }
 }
