@@ -26,9 +26,11 @@ internal static class Program
         await SlowSinkDoesNotBlockFastSinkAsync();
         await SaturatedSinkDoesNotDropOtherSinkAsync();
         await DrainWaitsForAcceptedWorkAsync();
+        await BoundedDrainAbortsBlockedSinkAsync();
 
         await ReloadDrainsOldGenerationBeforeSwitchAsync();
         await InvalidReloadPreservesActiveGenerationAsync();
+        await InvalidEnabledSinkReloadPreservesActiveGenerationAsync();
         await DisposeDuringActiveIngestionIsSafeAsync();
         await InitializeAfterDisposeIsRejectedAsync();
 
@@ -43,7 +45,7 @@ internal static class Program
         await FailingSinkDoesNotAffectHealthySinkAsync();
         await HttpSinkRecoversAfterNonSuccessResponseAsync();
 
-        Console.WriteLine("LogExporter lifecycle validation passed.");
+        Console.WriteLine("LogExporter validation passed.");
     }
 
     private static async Task SlowSinkDoesNotBlockFastSinkAsync()
@@ -114,6 +116,22 @@ internal static class Program
 
         await drain.WaitAsync(TimeSpan.FromSeconds(2));
         Assert(slow.Count == 1, "Drain did not complete the accepted sink export.");
+    }
+
+    private static async Task BoundedDrainAbortsBlockedSinkAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var slow = new BlockingSink();
+
+        dispatcher.Add(slow, 16);
+        await dispatcher.DispatchAsync(CreateBatch(1), CancellationToken.None);
+        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var drained = await dispatcher
+            .DrainAsync(TimeSpan.FromMilliseconds(50))
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert(!drained, "Bounded drain unexpectedly reported a graceful completion.");
     }
 
     private static async Task ReloadDrainsOldGenerationBeforeSwitchAsync()
@@ -194,6 +212,51 @@ internal static class Program
                 "Active generation lost data before invalid reload.");
             Assert(names.Contains("after-invalid.example"),
                 "Invalid reload stopped the previously active generation.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task InvalidEnabledSinkReloadPreservesActiveGenerationAsync()
+    {
+        var directory = CreateTempDirectory();
+        var path = Path.Combine(directory, "active-nested.ndjson");
+
+        try
+        {
+            using var app = new App();
+            var dnsServer = CreateDnsServer();
+
+            await app.InitializeAsync(dnsServer, FileConfig(path));
+            await InsertAsync(app, "before-invalid-sink.example");
+
+            var rejected = false;
+
+            try
+            {
+                await app.InitializeAsync(
+                    dnsServer,
+                    """{"sinks":{"file":{"enabled":true}},"pipeline":{}}""");
+            }
+            catch (System.ComponentModel.DataAnnotations.ValidationException)
+            {
+                rejected = true;
+            }
+
+            Assert(rejected,
+                "Invalid enabled sink configuration was unexpectedly accepted.");
+
+            await InsertAsync(app, "after-invalid-sink.example");
+            app.Dispose();
+
+            var names = ReadQuestionNames(path);
+
+            Assert(names.Contains("before-invalid-sink.example"),
+                "Active generation lost data before invalid enabled-sink reload.");
+            Assert(names.Contains("after-invalid-sink.example"),
+                "Invalid enabled-sink reload stopped the previously active generation.");
         }
         finally
         {
@@ -698,7 +761,7 @@ internal static class Program
             }
 
             throw new NotSupportedException(
-                $"Unexpected IDnsServer member used by lifecycle validation: {targetMethod.Name}");
+                $"Unexpected IDnsServer member used by validation harness: {targetMethod.Name}");
         }
     }
 

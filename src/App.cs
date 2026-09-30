@@ -36,6 +36,7 @@ namespace LogExporter
         #region variables
 
         private const int BULK_INSERT_COUNT = 1000;
+        private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(30);
 
         private readonly SinkDispatcher _sinkDispatcher;
         private readonly PipelineDispatcher _enrichmentDispatcher;
@@ -55,7 +56,6 @@ namespace LogExporter
         private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
         private IngestionState? _ingestionState;
         private Task? _backgroundTask;
-        private CancellationTokenSource? _pipelineCancellation;
         private AppConfig? _config;
         private int _disposed;
         private IDnsServer? _dnsServer;
@@ -192,7 +192,7 @@ namespace LogExporter
                         SingleWriter = false,
                         FullMode = BoundedChannelFullMode.DropWrite
                     },
-                    _ => IncrementDropAndMaybeLog());
+                    _ => IncrementDropCount());
 
                 var enrichedChannel = Channel.CreateBounded<LogEntry>(
                     new BoundedChannelOptions(_config.Sinks.MaxQueueSize)
@@ -201,23 +201,16 @@ namespace LogExporter
                         SingleWriter = true,
                         FullMode = BoundedChannelFullMode.DropWrite
                     },
-                    _ => IncrementDropAndMaybeLog());
+                    _ => IncrementDropCount());
 
-                var pipelineCancellation = new CancellationTokenSource();
-
-                _pipelineCancellation = pipelineCancellation;
-
-                // Workers capture this generation's channels and cancellation token.
-                // They never re-read mutable channel fields, so an old worker cannot
-                // hop onto replacement channels.
+                // Workers capture this generation's channels. They never re-read mutable
+                // channel fields, so an old worker cannot hop onto replacement channels.
                 _backgroundTask = Task.WhenAll(
-                    Task.Run(() => EnrichLogsAsync(
+                    EnrichLogsAsync(
                         transformChannel.Reader,
-                        enrichedChannel.Writer,
-                        pipelineCancellation.Token)),
-                    Task.Run(() => ExportLogsAsync(
-                        enrichedChannel.Reader,
-                        pipelineCancellation.Token)));
+                        enrichedChannel.Writer),
+                    ExportLogsAsync(
+                        enrichedChannel.Reader));
 
                 Volatile.Write(
                     ref _ingestionState,
@@ -282,45 +275,34 @@ namespace LogExporter
         {
             var ingestionState = Interlocked.Exchange(ref _ingestionState, null);
             var backgroundTask = Interlocked.Exchange(ref _backgroundTask, null);
-            var pipelineCancellation = Interlocked.Exchange(ref _pipelineCancellation, null);
-
             // Completing the input channel lets both workers drain accepted entries in order.
-            // Cancellation is reserved for a future forced-abort path; normal stop is graceful.
             ingestionState?.Channel.Writer.TryComplete();
 
-            try
+            if (backgroundTask is not null)
             {
-                if (backgroundTask is not null)
-                {
-                    await backgroundTask.ConfigureAwait(false);
-                }
+                await backgroundTask.ConfigureAwait(false);
+            }
 
-                await _sinkDispatcher.DrainAsync().ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (pipelineCancellation?.IsCancellationRequested is true)
+            if (!await _sinkDispatcher
+                .DrainAsync(ShutdownDrainTimeout)
+                .ConfigureAwait(false))
             {
-                // Expected when stopping a pipeline generation.
-            }
-            finally
-            {
-                pipelineCancellation?.Dispose();
+                _dnsServer?.WriteLog(
+                    $"Log exporter drain exceeded {ShutdownDrainTimeout.TotalSeconds:F0} seconds; aborting remaining sink work.");
             }
         }
 
         // Step 2: EnrichLogsAsync – transform -> enrich
         private async Task EnrichLogsAsync(
             ChannelReader<LogEntry> transformReader,
-            ChannelWriter<LogEntry> enrichedWriter,
-            CancellationToken token)
+            ChannelWriter<LogEntry> enrichedWriter)
         {
             try
             {
-                while (await transformReader.WaitToReadAsync(token).ConfigureAwait(false))
+                while (await transformReader.WaitToReadAsync().ConfigureAwait(false))
                 {
                     while (transformReader.TryRead(out var entry))
                     {
-                        token.ThrowIfCancellationRequested();
-
                         // If there is no question, most enrichers cannot do anything.
                         if (entry.Question != null && _enrichmentDispatcher.Any())
                         {
@@ -344,11 +326,9 @@ namespace LogExporter
                             _dnsServer?.WriteLog(ex);
                         }
                     }
+
+                    ReportDroppedIfDue();
                 }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                // Expected when stopping a pipeline generation.
             }
             catch (Exception ex)
             {
@@ -369,19 +349,18 @@ namespace LogExporter
         }
 
         // Step 3: ExportLogsAsync – pipeline -> output
-        private async Task ExportLogsAsync(ChannelReader<LogEntry> enrichedReader, CancellationToken token)
+        private async Task ExportLogsAsync(ChannelReader<LogEntry> enrichedReader)
         {
             // ADR: Reuse this list buffer to avoid GC churn during high-volume logging.
             var batch = new List<LogEntry>(BULK_INSERT_COUNT);
 
             try
             {
-                while (await enrichedReader.WaitToReadAsync(token).ConfigureAwait(false))
+                while (await enrichedReader.WaitToReadAsync().ConfigureAwait(false))
                 {
                     while (batch.Count < BULK_INSERT_COUNT &&
                            enrichedReader.TryRead(out var entry))
                     {
-                        token.ThrowIfCancellationRequested();
                         batch.Add(entry);
                     }
 
@@ -390,12 +369,8 @@ namespace LogExporter
                         try
                         {
                             await _sinkDispatcher
-                                .DispatchAsync(batch, token)
+                                .DispatchAsync(batch, CancellationToken.None)
                                 .ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (token.IsCancellationRequested)
-                        {
-                            return;
                         }
                         catch (Exception ex)
                         {
@@ -408,10 +383,6 @@ namespace LogExporter
                         }
                     }
                 }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                // Expected when stopping a pipeline generation.
             }
             catch (Exception ex)
             {
@@ -608,10 +579,11 @@ namespace LogExporter
             }
         }
 
-        private void IncrementDropAndMaybeLog()
-        {
+        private void IncrementDropCount() =>
             Interlocked.Increment(ref _droppedCount);
 
+        private void ReportDroppedIfDue()
+        {
             var nowTicks = DateTime.UtcNow.Ticks;
             var lastTicks = Volatile.Read(ref _lastDropTicks);
 

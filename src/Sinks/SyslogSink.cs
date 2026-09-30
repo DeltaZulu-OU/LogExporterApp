@@ -22,6 +22,7 @@ using Serilog;
 using Serilog.Events;
 using Serilog.Parsing;
 using Serilog.Sinks.Syslog;
+using Serilog.Sinks.PeriodicBatching;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -87,12 +88,22 @@ namespace LogExporter.Sinks
         /// Longest time a single export waits for the logger to be created.
         /// </summary>
         /// <remarks>
-        /// <see cref="SinkDispatcher"/> awaits all sinks together, so waiting for the whole retry
-        /// window would stall every other sink for about 30 seconds. One second covers a normal
-        /// lookup for the first batch. While retries are still running, later batches are dropped
-        /// for syslog only.
+        /// Each sink has its own worker, so waiting here affects only syslog. One second covers a
+        /// normal lookup for the first batch without holding the syslog worker through the whole
+        /// retry window. While retries are still running, later syslog batches are dropped.
         /// </remarks>
         private static readonly TimeSpan LoggerWaitTimeout = TimeSpan.FromSeconds(1);
+
+        // SinkWorker is the primary buffering layer. Serilog requires a batching wrapper for
+        // remote syslog transports, so keep that secondary queue shallow and eager. Its completion
+        // boundary is not equivalent to confirmed network delivery.
+        private static PeriodicBatchingSinkOptions CreateBatchOptions() => new()
+        {
+            BatchSizeLimit = 1000,
+            Period = TimeSpan.FromMilliseconds(25),
+            QueueLimit = 1000,
+            EagerlyEmitFirstEvent = true
+        };
 
         private readonly string _address;
         private readonly int _port;
@@ -202,8 +213,10 @@ namespace LogExporter.Sinks
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
-            // Serilog writes are synchronous. This sink has a dedicated worker queue, so
-            // sequential writes here cannot block the other configured sinks.
+            // logger.Write() only hands the event to Serilog. Remote UDP/TCP/TLS delivery is
+            // performed by Serilog's internal batching transport, so transport failures may be
+            // reported through Serilog SelfLog rather than thrown from this method. SinkWorker
+            // isolation still prevents this sink from blocking the other configured sinks.
 
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
             {
@@ -360,14 +373,16 @@ namespace LogExporter.Sinks
                             FramingType.OCTET_COUNTING,
                             SyslogFormat.RFC5424,
                             _facility,
-                            useTls: _protocol == "tls"),
+                            useTls: _protocol == "tls",
+                            batchConfig: CreateBatchOptions()),
 
                 "udp" => conf.WriteTo.UdpSyslog(
                             host,
                             _port,
                             _appName,
                             SyslogFormat.RFC5424,
-                            _facility),
+                            _facility,
+                            batchConfig: CreateBatchOptions()),
 
                 "local" => conf.WriteTo.LocalSyslog(
                             _appName,

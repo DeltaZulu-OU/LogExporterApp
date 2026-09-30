@@ -36,6 +36,7 @@ namespace LogExporter.Sinks
         private readonly Lock _sync = new Lock();
         private readonly Dictionary<Type, SinkWorker> _workers =
             new Dictionary<Type, SinkWorker>();
+        private SinkWorker[] _workerSnapshot = Array.Empty<SinkWorker>();
 
         private bool _disposed;
 
@@ -55,8 +56,9 @@ namespace LogExporter.Sinks
                 }
 
                 _disposed = true;
-                workers = new List<SinkWorker>(_workers.Values);
+                workers = new List<SinkWorker>(_workerSnapshot);
                 _workers.Clear();
+                Volatile.Write(ref _workerSnapshot, Array.Empty<SinkWorker>());
             }
 
             Exception? failure = null;
@@ -106,6 +108,7 @@ namespace LogExporter.Sinks
                     _workers.Add(
                         sink.GetType(),
                         new SinkWorker(sink, queueCapacity, onError, onLog));
+                    RefreshSnapshotLocked();
                 }
             }
             catch
@@ -125,6 +128,7 @@ namespace LogExporter.Sinks
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _workers.Remove(type, out worker);
+                RefreshSnapshotLocked();
             }
 
             worker?.Dispose();
@@ -145,16 +149,11 @@ namespace LogExporter.Sinks
                 return Task.CompletedTask;
             }
 
-            List<SinkWorker> workers;
+            var workers = Volatile.Read(ref _workerSnapshot);
 
-            lock (_sync)
+            if (workers.Length == 0)
             {
-                if (_disposed || _workers.Count == 0)
-                {
-                    return Task.CompletedTask;
-                }
-
-                workers = new List<SinkWorker>(_workers.Values);
+                return Task.CompletedTask;
             }
 
             foreach (var worker in workers)
@@ -165,32 +164,67 @@ namespace LogExporter.Sinks
             return Task.CompletedTask;
         }
 
-        public async Task DrainAsync()
+        public Task DrainAsync() => DrainCoreAsync(timeout: null);
+
+        public Task<bool> DrainAsync(TimeSpan timeout)
         {
-            List<SinkWorker> workers;
-
-            lock (_sync)
+            if (timeout <= TimeSpan.Zero)
             {
-                if (_workers.Count == 0)
-                {
-                    return;
-                }
-
-                workers = new List<SinkWorker>(_workers.Values);
+                throw new ArgumentOutOfRangeException(nameof(timeout));
             }
 
-            var tasks = new Task[workers.Count];
+            return DrainCoreAsync(timeout);
+        }
 
-            for (var i = 0; i < workers.Count; i++)
+        private async Task<bool> DrainCoreAsync(TimeSpan? timeout)
+        {
+            var workers = Volatile.Read(ref _workerSnapshot);
+
+            if (workers.Length == 0)
+            {
+                return true;
+            }
+
+            var tasks = new Task[workers.Length];
+
+            for (var i = 0; i < workers.Length; i++)
             {
                 workers[i].Complete();
                 tasks[i] = workers[i].Completion;
             }
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            var completion = Task.WhenAll(tasks);
+
+            if (timeout is null)
+            {
+                await completion.ConfigureAwait(false);
+                return true;
+            }
+
+            try
+            {
+                await completion.WaitAsync(timeout.Value).ConfigureAwait(false);
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                foreach (var worker in workers)
+                {
+                    worker.Abort();
+                }
+
+                return false;
+            }
         }
 
         #endregion
+
+        private void RefreshSnapshotLocked()
+        {
+            var snapshot = new SinkWorker[_workers.Count];
+            _workers.Values.CopyTo(snapshot, 0);
+            Volatile.Write(ref _workerSnapshot, snapshot);
+        }
 
         private sealed class SinkWorker : IDisposable
         {
@@ -246,6 +280,8 @@ namespace LogExporter.Sinks
 
             public void Complete() => _queue.Writer.TryComplete();
 
+            public void Abort() => _cancellation.Cancel();
+
             public void Dispose()
             {
                 if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -255,16 +291,24 @@ namespace LogExporter.Sinks
 
                 Complete();
 
+                if (!Completion.IsCompleted)
+                {
+                    _cancellation.Cancel();
+                }
+
                 try
                 {
-                    Completion.GetAwaiter().GetResult();
+                    Completion.WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
                 }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                 {
                 }
+                catch (TimeoutException)
+                {
+                    // Forced shutdown is bounded. Dispose the sink below to release its I/O.
+                }
                 finally
                 {
-                    _cancellation.Cancel();
                     _cancellation.Dispose();
                     _sink.Dispose();
                 }
@@ -289,14 +333,7 @@ namespace LogExporter.Sinks
                         if (batch.Count < BULK_INSERT_COUNT &&
                             !_queue.Reader.Completion.IsCompleted)
                         {
-                            await Task.Delay(BatchDelay, _cancellation.Token)
-                                .ConfigureAwait(false);
-
-                            while (batch.Count < BULK_INSERT_COUNT &&
-                                   _queue.Reader.TryRead(out var nextEntry))
-                            {
-                                batch.Add(nextEntry);
-                            }
+                            await FillBatchUntilDelayAsync(batch).ConfigureAwait(false);
                         }
 
                         if (batch.Count == 0)
@@ -329,6 +366,35 @@ namespace LogExporter.Sinks
                 catch (Exception ex)
                 {
                     ReportError(ex);
+                }
+            }
+
+            private async Task FillBatchUntilDelayAsync(List<LogEntry> batch)
+            {
+                var delayTask = Task.Delay(BatchDelay, _cancellation.Token);
+
+                while (batch.Count < BULK_INSERT_COUNT &&
+                       !_queue.Reader.Completion.IsCompleted)
+                {
+                    var waitToReadTask = _queue.Reader
+                        .WaitToReadAsync(_cancellation.Token)
+                        .AsTask();
+
+                    var completed = await Task
+                        .WhenAny(waitToReadTask, delayTask)
+                        .ConfigureAwait(false);
+
+                    if (completed == delayTask ||
+                        !await waitToReadTask.ConfigureAwait(false))
+                    {
+                        break;
+                    }
+
+                    while (batch.Count < BULK_INSERT_COUNT &&
+                           _queue.Reader.TryRead(out var entry))
+                    {
+                        batch.Add(entry);
+                    }
                 }
             }
 
