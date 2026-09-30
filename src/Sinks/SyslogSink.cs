@@ -110,7 +110,6 @@ namespace LogExporter.Sinks
         private readonly string _protocol;
         private readonly Action<string>? _log;
 
-
         /// <summary>
         ///     Initializes a new instance of the cancellation token source used to signal disposal and cancel ongoing operations.
         /// </summary>

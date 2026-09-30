@@ -46,7 +46,7 @@ namespace LogExporter.Sinks
 
         public void Dispose()
         {
-            List<SinkWorker> workers;
+            SinkWorker[] workers;
 
             lock (_sync)
             {
@@ -56,7 +56,7 @@ namespace LogExporter.Sinks
                 }
 
                 _disposed = true;
-                workers = new List<SinkWorker>(_workerSnapshot);
+                workers = _workerSnapshot;
                 _workers.Clear();
                 Volatile.Write(ref _workerSnapshot, Array.Empty<SinkWorker>());
             }

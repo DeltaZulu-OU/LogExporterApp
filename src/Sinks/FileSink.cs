@@ -32,7 +32,6 @@ namespace LogExporter.Sinks
 
         private readonly FileStream _fileStream;
         private readonly RecyclableMemoryStreamManager _memoryManager = new();
-        private readonly StreamWriter _writer;
         private bool _disposed;
 
         #endregion variables
@@ -49,7 +48,6 @@ namespace LogExporter.Sinks
                 bufferSize: 64 * 1024,
                 useAsync: true);
 
-            _writer = new StreamWriter(_fileStream);
         }
 
         #endregion constructor
@@ -63,7 +61,6 @@ namespace LogExporter.Sinks
                 return;
             }
 
-            _writer.Dispose();
             _fileStream.Dispose();
             _disposed = true;
         }
@@ -89,8 +86,8 @@ namespace LogExporter.Sinks
             NdjsonSerializer.WriteBatch(ms, logs);
             ms.Position = 0;
 
-            await ms.CopyToAsync(_writer.BaseStream, token).ConfigureAwait(false);
-            await _writer.BaseStream.FlushAsync(token).ConfigureAwait(false);
+            await ms.CopyToAsync(_fileStream, token).ConfigureAwait(false);
+            await _fileStream.FlushAsync(token).ConfigureAwait(false);
         }
 
         #endregion public
