@@ -82,21 +82,21 @@ namespace LogExporter
         public bool EnableEdnsLogging { get; set; } = true;
 
         [JsonPropertyName("console")]
-        public required ConsoleSink ConsoleSinkConfig { get; set; }
+        public ConsoleSink? ConsoleSinkConfig { get; set; }
 
         [JsonPropertyName("file")]
-        public required FileSink FileSinkConfig { get; set; }
+        public FileSink? FileSinkConfig { get; set; }
 
         [JsonPropertyName("http")]
-        public required HttpSink HttpSinkConfig { get; set; }
+        public HttpSink? HttpSinkConfig { get; set; }
 
         [JsonPropertyName("syslog")]
-        public required SyslogSink SyslogSinkConfig { get; set; }
+        public SyslogSink? SyslogSinkConfig { get; set; }
 
         public class SyslogSink : FeatureBase
         {
             [JsonPropertyName("address")]
-            public required string Address { get; set; }
+            public string? Address { get; set; }
 
             [Range(1, 65535)]
             [JsonPropertyName("port")]
@@ -104,16 +104,16 @@ namespace LogExporter
 
             [AllowedValues(["UDP", "TCP", "TLS", "LOCAL"])]
             [JsonPropertyName("protocol")]
-            public required string Protocol { get; set; }
+            public string? Protocol { get; set; }
         }
 
         public class ConsoleSink : FeatureBase;
 
         public class FileSink : FeatureBase
         {
-            [Required(ErrorMessage = "file.path is required when syslog logging is enabled.")]
+            [Required(ErrorMessage = "file.path is required when file logging is enabled.")]
             [JsonPropertyName("path")]
-            public required string Path { get; set; }
+            public string? Path { get; set; }
         }
 
         public class HttpSink : FeatureBase
@@ -122,7 +122,7 @@ namespace LogExporter
             [Required(ErrorMessage = "http.endpoint is required when HTTP logging is enabled.")]
             [Url]
             [JsonPropertyName("endpoint")]
-            public required string Endpoint { get; set; }
+            public string? Endpoint { get; set; }
 
             [JsonPropertyName("headers")]
             public Dictionary<string, string?>? Headers { get; set; }
@@ -132,10 +132,10 @@ namespace LogExporter
     public class PipelineConfig
     {
         [JsonPropertyName("normalize")]
-        public required NormalizeProcess NormalizeProcessConfig { get; set; }
+        public NormalizeProcess? NormalizeProcessConfig { get; set; }
 
         [JsonPropertyName("tagging")]
-        public required TaggingProcess TaggingProcessConfig {  get; set; }
+        public TaggingProcess? TaggingProcessConfig {  get; set; }
 
         public class NormalizeProcess : FeatureBase;
 
