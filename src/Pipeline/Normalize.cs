@@ -27,18 +27,18 @@ namespace LogExporter.Pipeline
 
         public void Process(LogEntry logEntry)
         {
-            if (logEntry.Question == null)
+            if (logEntry.Question == null || logEntry.Question.QuestionName == null)
+            {
                 return;
+            }
 
-            // store under a well-known key – you can standardize keys if you like
+            // store under a well-known key you can standardize keys if you like
             logEntry.Meta["domainInfo"] = _domainCache.GetOrAdd(logEntry.Question.QuestionName);
         }
 
-        public void Dispose()
-        {
+        public void Dispose() =>
             // If DomainCache ever needs disposal, do it here.
             GC.SuppressFinalize(this);
-        }
     }
 
 }

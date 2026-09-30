@@ -41,7 +41,7 @@ namespace LogExporter
             // Assign timestamp and ensure it's in UTC
             Timestamp = timestamp.Kind == DateTimeKind.Utc ? timestamp : timestamp.ToUniversalTime();
 
-            // Set hostname
+            // Set nameserver
             NameServer = request.Metadata.NameServer.Host;
 
             // Extract client information
@@ -59,7 +59,7 @@ namespace LogExporter
             // Extract request information
             if (request.Question.Count > 0)
             {
-                DnsQuestionRecord query = request.Question[0];
+                var query = request.Question[0];
 
                 Question = new DnsQuestion
                 {
@@ -101,14 +101,14 @@ namespace LogExporter
 
         private EDNSLog[] PopulateEDNSLogs(DnsDatagram response)
         {
-            List<EDnsOption> ednsErrors = response.EDNS.Options.Where(o => o.Code == EDnsOptionCode.EXTENDED_DNS_ERROR).ToList();
+            var ednsErrors = response.EDNS.Options.Where(o => o.Code == EDnsOptionCode.EXTENDED_DNS_ERROR).ToList();
             if (ednsErrors.Count == 0)
             {
                 return EmptyEdns;
             }
 
-            List<EDNSLog> edns = new List<EDNSLog>(ednsErrors.Count);
-            foreach (EDnsOption extendedErrorLog in ednsErrors)
+            var edns = new List<EDNSLog>(ednsErrors.Count);
+            foreach (var extendedErrorLog in ednsErrors)
             {
                 // ADR: EDNS extended error comes from network input and may not follow
                 // the expected "type: message" format. Previously this code assumed
@@ -116,7 +116,7 @@ namespace LogExporter
                 // allowing remote parties to crash the logging pipeline.
                 // We now parse defensively and treat malformed data as a best-effort message.
 
-                string? raw = extendedErrorLog.Data?.ToString();
+                var raw = extendedErrorLog.Data?.ToString();
                 if (string.IsNullOrWhiteSpace(raw))
                 {
                     continue;
@@ -127,7 +127,7 @@ namespace LogExporter
                 string? errType = null;
                 string? message = null;
 
-                string[] parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+                var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
                 if (parts.Length == 2)
                 {
                     errType = parts[0];
@@ -173,10 +173,7 @@ namespace LogExporter
         // Meta bag populated by pipeline stages
         public Dictionary<string, object> Meta { get; } = new();
 
-        public override string ToString()
-        {
-            return JsonSerializer.Serialize(this, DnsLogSerializerOptions.Default);
-        }
+        public override string ToString() => JsonSerializer.Serialize(this, DnsLogSerializerOptions.Default);
 
         public static class DnsLogSerializerOptions
         {
@@ -194,16 +191,16 @@ namespace LogExporter
         public class DnsQuestion
         {
             public DnsClass QuestionClass { get; set; }
-            public string QuestionName { get; set; }
+            public string? QuestionName { get; set; }
             public DnsResourceRecordType QuestionType { get; set; }
         }
 
         public class DnsResourceRecord
         {
             public DnssecStatus DnssecStatus { get; set; }
-            public string Name { get; set; }
+            public required string Name { get; set; }
             public DnsClass RecordClass { get; set; }
-            public string RecordData { get; set; }
+            public required string RecordData { get; set; }
             public uint RecordTtl { get; set; }
             public DnsResourceRecordType RecordType { get; set; }
         }
@@ -218,14 +215,11 @@ namespace LogExporter
         {
             public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
             {
-                string? dts = reader.GetString();
+                var dts = reader.GetString();
                 return dts == null ? DateTime.MinValue : DateTime.Parse(dts);
             }
 
-            public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
-            {
-                writer.WriteStringValue(value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"));
-            }
+            public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"));
         }
     }
 }

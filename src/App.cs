@@ -40,19 +40,25 @@ namespace LogExporter
         private readonly SinkDispatcher _sinkDispatcher;
         private readonly PipelineDispatcher _enrichmentDispatcher;
 
-        // Stage 1 buffer: transformed LogEntry waiting for enrichment
-        private Channel<LogEntry>? _transformChannel;
+        private sealed class IngestionState
+        {
+            public IngestionState(Channel<LogEntry> channel, bool enableEdnsLogging)
+            {
+                Channel = channel;
+                EnableEdnsLogging = enableEdnsLogging;
+            }
 
-        // Stage 2 buffer: enriched LogEntry waiting for dispatch
-        private Channel<LogEntry>? _enrichedChannel;
+            public Channel<LogEntry> Channel { get; }
+            public bool EnableEdnsLogging { get; }
+        }
 
         private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
+        private IngestionState? _ingestionState;
         private Task? _backgroundTask;
         private CancellationTokenSource? _pipelineCancellation;
         private AppConfig? _config;
         private bool _disposed;
         private IDnsServer? _dnsServer;
-        private volatile bool _enableLogging; // volatile to improve cross-thread visibility
 
         private long _droppedCount;
         private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
@@ -88,18 +94,17 @@ namespace LogExporter
 
         #region IDisposable
 
-        ~App() => Dispose();
-
         public void Dispose()
         {
             _lifecycleLock.Wait();
             try
             {
                 if (_disposed)
+                {
                     return;
+                }
 
                 _disposed = true;
-                _enableLogging = false;
 
                 try
                 {
@@ -128,7 +133,6 @@ namespace LogExporter
                     _dnsServer?.WriteLog(ex);
                 }
 
-                GC.SuppressFinalize(this);
             }
             finally
             {
@@ -149,52 +153,60 @@ namespace LogExporter
 
                 _dnsServer = dnsServer;
 
+                AppConfig nextConfig;
+                try
+                {
+                    nextConfig = AppConfig.Deserialize(config)
+                                 ?? throw new DnsClientException("Invalid application configuration.");
+                }
+                catch (Exception ex)
+                {
+                    // Reject invalid configuration without stopping the active generation.
+                    _dnsServer?.WriteLog(ex);
+                    throw;
+                }
+
                 // A config update reuses this App instance. Stop the current generation
-                // before replacing channels, enrichers, or sinks so workers cannot cross
-                // generations or use resources that are being disposed.
+                // only after the replacement configuration has been validated.
                 await StopPipelineAsync().ConfigureAwait(false);
 
                 try
                 {
-                    _config = AppConfig.Deserialize(config)
-                              ?? throw new DnsClientException("Invalid application configuration.");
-
+                    _config = nextConfig;
                     ConfigurePipeline();
                     ConfigureSinks();
                 }
                 catch (Exception ex)
                 {
                     _dnsServer?.WriteLog(ex);
-                    _enableLogging = false;
                     throw;
                 }
 
                 if (!_sinkDispatcher.Any())
                 {
-                    _enableLogging = false;
                     return;
                 }
 
-                Channel<LogEntry> transformChannel = Channel.CreateBounded<LogEntry>(
+                var transformChannel = Channel.CreateBounded<LogEntry>(
                     new BoundedChannelOptions(_config!.Sinks.MaxQueueSize)
                     {
                         SingleReader = true,
                         SingleWriter = false,
                         FullMode = BoundedChannelFullMode.DropWrite
-                    });
+                    },
+                    _ => IncrementDropAndMaybeLog());
 
-                Channel<LogEntry> enrichedChannel = Channel.CreateBounded<LogEntry>(
+                var enrichedChannel = Channel.CreateBounded<LogEntry>(
                     new BoundedChannelOptions(_config.Sinks.MaxQueueSize)
                     {
                         SingleReader = true,
                         SingleWriter = true,
                         FullMode = BoundedChannelFullMode.DropWrite
-                    });
+                    },
+                    _ => IncrementDropAndMaybeLog());
 
-                CancellationTokenSource pipelineCancellation = new CancellationTokenSource();
+                var pipelineCancellation = new CancellationTokenSource();
 
-                _transformChannel = transformChannel;
-                _enrichedChannel = enrichedChannel;
                 _pipelineCancellation = pipelineCancellation;
 
                 // Workers capture this generation's channels and cancellation token.
@@ -209,7 +221,9 @@ namespace LogExporter
                         enrichedChannel.Reader,
                         pipelineCancellation.Token)));
 
-                _enableLogging = true;
+                Volatile.Write(
+                    ref _ingestionState,
+                    new IngestionState(transformChannel, _config.Sinks.EnableEdnsLogging));
             }
             finally
             {
@@ -226,22 +240,22 @@ namespace LogExporter
             // app's state, and must hold for a later reload that enables a syslog sink. The
             // IsCompleted read keeps the per-query cost to a plain field read once signalled.
             if (!_dnsServerReady.Task.IsCompleted)
+            {
                 _dnsServerReady.TrySetResult();
+            }
 
-            if (!_enableLogging)
+            var state = Volatile.Read(ref _ingestionState);
+            if (state is null)
+            {
                 return Task.CompletedTask;
-
-            Channel<LogEntry>? transformChannel = _transformChannel;
-            AppConfig? config = _config;
-            if (transformChannel is null || config is null)
-                return Task.CompletedTask;
+            }
 
             LogEntry entry;
 
             try
             {
                 // input -> transform: build LogEntry
-                entry = new LogEntry(timestamp, remoteEP, protocol, request, response, config.Sinks.EnableEdnsLogging);
+                entry = new LogEntry(timestamp, remoteEP, protocol, request, response, state.EnableEdnsLogging);
             }
             catch (Exception ex)
             {
@@ -252,8 +266,7 @@ namespace LogExporter
 
             try
             {
-                if (!transformChannel.Writer.TryWrite(entry))
-                    IncrementDropAndMaybeLog();
+                state.Channel.Writer.TryWrite(entry);
             }
             catch (Exception ex)
             {
@@ -269,24 +282,23 @@ namespace LogExporter
 
         private async Task StopPipelineAsync()
         {
-            _enableLogging = false;
+            var ingestionState = Interlocked.Exchange(ref _ingestionState, null);
+            var backgroundTask = _backgroundTask;
+            var pipelineCancellation = _pipelineCancellation;
 
-            Channel<LogEntry>? transformChannel = _transformChannel;
-            Task? backgroundTask = _backgroundTask;
-            CancellationTokenSource? pipelineCancellation = _pipelineCancellation;
-
-            _transformChannel = null;
-            _enrichedChannel = null;
             _backgroundTask = null;
             _pipelineCancellation = null;
 
-            transformChannel?.Writer.TryComplete();
-            pipelineCancellation?.Cancel();
+            // Completing the input channel lets both workers drain accepted entries in order.
+            // Cancellation is reserved for a future forced-abort path; normal stop is graceful.
+            ingestionState?.Channel.Writer.TryComplete();
 
             try
             {
                 if (backgroundTask is not null)
+                {
                     await backgroundTask.ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (pipelineCancellation?.IsCancellationRequested is true)
             {
@@ -308,7 +320,7 @@ namespace LogExporter
             {
                 while (await transformReader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
-                    while (transformReader.TryRead(out LogEntry? entry))
+                    while (transformReader.TryRead(out var entry))
                     {
                         token.ThrowIfCancellationRequested();
 
@@ -328,10 +340,7 @@ namespace LogExporter
 
                         try
                         {
-                            if (!enrichedWriter.TryWrite(entry))
-                            {
-                                IncrementDropAndMaybeLog();
-                            }
+                            enrichedWriter.TryWrite(entry);
                         }
                         catch (Exception ex)
                         {
@@ -366,14 +375,14 @@ namespace LogExporter
         private async Task ExportLogsAsync(ChannelReader<LogEntry> enrichedReader, CancellationToken token)
         {
             // ADR: Reuse this list buffer to avoid GC churn during high-volume logging.
-            List<LogEntry> batch = new List<LogEntry>(BULK_INSERT_COUNT);
+            var batch = new List<LogEntry>(BULK_INSERT_COUNT);
 
             try
             {
                 while (await enrichedReader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
                     while (batch.Count < BULK_INSERT_COUNT &&
-                           enrichedReader.TryRead(out LogEntry? entry))
+                           enrichedReader.TryRead(out var entry))
                     {
                         token.ThrowIfCancellationRequested();
                         batch.Add(entry);
@@ -423,7 +432,7 @@ namespace LogExporter
         /// </remarks>
         private void ConfigureSinks()
         {
-            SinkConfig sinks = _config!.Sinks;
+            var sinks = _config!.Sinks;
 
             ConfigureConsoleSink(sinks.ConsoleSinkConfig);
             ConfigureFileSink(sinks.FileSinkConfig);
@@ -435,7 +444,9 @@ namespace LogExporter
         {
             _sinkDispatcher.Remove(typeof(ConsoleSink));
             if (config?.Enabled is not true)
+            {
                 return;
+            }
 
             try
             {
@@ -451,7 +462,9 @@ namespace LogExporter
         {
             _sinkDispatcher.Remove(typeof(FileSink));
             if (config?.Enabled is not true)
+            {
                 return;
+            }
 
             try
             {
@@ -488,7 +501,9 @@ namespace LogExporter
         {
             _sinkDispatcher.Remove(typeof(HttpSink));
             if (config?.Enabled is not true)
+            {
                 return;
+            }
 
             try
             {
@@ -514,7 +529,9 @@ namespace LogExporter
         {
             _sinkDispatcher.Remove(typeof(SyslogSink));
             if (config?.Enabled is not true)
+            {
                 return;
+            }
 
             try
             {
@@ -542,28 +559,33 @@ namespace LogExporter
             }
         }
 
+        /// <summary>
+        /// Logs a warning or notification that a specific event log sink has been disabled due to a configuration or environment issue.
+        /// </summary>
+        /// <param name="sinkName">The name of the sink that is disabled.</param>
+        /// <param name="reason">The specific reason explaining why the sink was disabled.</param>
         /// <remarks>
         /// Expected failures are logged without the exception. They describe a configuration or
         /// environment problem the administrator must fix, and a stack trace only hides the reason.
         /// </remarks>
-        private void LogSinkDisabled(string sinkName, string reason)
-        {
-            _dnsServer?.WriteLog($"{sinkName} sink is disabled: {reason}");
-        }
+        private void LogSinkDisabled(string sinkName, string reason) => _dnsServer?.WriteLog($"{sinkName} sink is disabled: {reason}");
 
+        /// <summary>
+        /// Logs an error message when an unexpected failure occurs in a log sink.
+        /// </summary>
+        /// <param name="sinkName">The name of the sink that failed.</param>
+        /// <param name="ex">The exception that occurred.</param>
         /// <remarks>
         /// Unknown failures keep the stack trace because they point to a bug rather than to a
         /// configuration mistake.
         /// </remarks>
-        private void LogUnexpectedSinkFailure(string sinkName, Exception ex)
-        {
-            _dnsServer?.WriteLog($"{sinkName} sink is disabled due to an unexpected error.", ex);
-        }
+        private void LogUnexpectedSinkFailure(string sinkName, Exception ex) => _dnsServer?.WriteLog($"{sinkName} sink is disabled due to an unexpected error.", ex);
 
         private void ConfigurePipeline()
         {
-            // Remove any existing enricher types first to avoid duplicate registration.
+            // Remove any existing processor types before applying the new configuration.
             _enrichmentDispatcher.Remove(typeof(Normalize));
+            _enrichmentDispatcher.Remove(typeof(Tags));
             if (_config!.Pipeline.NormalizeProcessConfig?.Enabled is true)
             {
                 _enrichmentDispatcher.Add(new Normalize());
@@ -578,13 +600,13 @@ namespace LogExporter
         {
             Interlocked.Increment(ref _droppedCount);
 
-            long nowTicks = DateTime.UtcNow.Ticks;
-            long lastTicks = Volatile.Read(ref _lastDropTicks);
+            var nowTicks = DateTime.UtcNow.Ticks;
+            var lastTicks = Volatile.Read(ref _lastDropTicks);
 
             if (new TimeSpan(nowTicks - lastTicks) >= DropLogInterval &&
                 Interlocked.CompareExchange(ref _lastDropTicks, nowTicks, lastTicks) == lastTicks)
             {
-                long dropped = Interlocked.Exchange(ref _droppedCount, 0);
+                var dropped = Interlocked.Exchange(ref _droppedCount, 0);
                 _dnsServer?.WriteLog(
                     $"Log export queue full; dropped {dropped} entries over last {DropLogInterval.TotalSeconds:F0}s.");
             }

@@ -29,11 +29,13 @@ namespace LogExporter
 {
     public class AppConfig
     {
+        [Required]
         [JsonPropertyName("sinks")]
-        public SinkConfig Sinks { get; set; }
+        public SinkConfig Sinks { get; set; } = null!;
 
+        [Required]
         [JsonPropertyName("pipeline")]
-        public PipelineConfig Pipeline { get; set; }
+        public PipelineConfig Pipeline { get; set; } = null!;
 
         /// <summary>
         /// Loads config and enforces DataAnnotations validation.
@@ -47,17 +49,19 @@ namespace LogExporter
         /// </summary>
         public static AppConfig Deserialize(string json)
         {
-            AppConfig config = JsonSerializer.Deserialize<AppConfig>(json, DnsConfigSerializerOptions.Default)
+            var config = JsonSerializer.Deserialize<AppConfig>(json, DnsConfigSerializerOptions.Default)
                          ?? throw new DnsClientException("Configuration could not be deserialized.");
 
             ValidateObject(config);
+            ValidateObject(config.Sinks);
+            ValidateObject(config.Pipeline);
 
             return config;
         }
 
         internal static void ValidateObject(object instance)
         {
-            ValidationContext ctx = new ValidationContext(instance);
+            var ctx = new ValidationContext(instance);
             Validator.ValidateObject(instance, ctx, validateAllProperties: true);
         }
     }
@@ -78,21 +82,21 @@ namespace LogExporter
         public bool EnableEdnsLogging { get; set; } = true;
 
         [JsonPropertyName("console")]
-        public ConsoleSink ConsoleSinkConfig { get; set; }
+        public required ConsoleSink ConsoleSinkConfig { get; set; }
 
         [JsonPropertyName("file")]
-        public FileSink FileSinkConfig { get; set; }
+        public required FileSink FileSinkConfig { get; set; }
 
         [JsonPropertyName("http")]
-        public HttpSink HttpSinkConfig { get; set; }
+        public required HttpSink HttpSinkConfig { get; set; }
 
         [JsonPropertyName("syslog")]
-        public SyslogSink SyslogSinkConfig { get; set; }
+        public required SyslogSink SyslogSinkConfig { get; set; }
 
         public class SyslogSink : FeatureBase
         {
             [JsonPropertyName("address")]
-            public string Address { get; set; }
+            public required string Address { get; set; }
 
             [Range(1, 65535)]
             [JsonPropertyName("port")]
@@ -100,18 +104,16 @@ namespace LogExporter
 
             [AllowedValues(["UDP", "TCP", "TLS", "LOCAL"])]
             [JsonPropertyName("protocol")]
-            public string Protocol { get; set; }
+            public required string Protocol { get; set; }
         }
 
-        public class ConsoleSink : FeatureBase
-        {
-        }
+        public class ConsoleSink : FeatureBase;
 
         public class FileSink : FeatureBase
         {
             [Required(ErrorMessage = "file.path is required when syslog logging is enabled.")]
             [JsonPropertyName("path")]
-            public string Path { get; set; }
+            public required string Path { get; set; }
         }
 
         public class HttpSink : FeatureBase
@@ -120,7 +122,7 @@ namespace LogExporter
             [Required(ErrorMessage = "http.endpoint is required when HTTP logging is enabled.")]
             [Url]
             [JsonPropertyName("endpoint")]
-            public string Endpoint { get; set; }
+            public required string Endpoint { get; set; }
 
             [JsonPropertyName("headers")]
             public Dictionary<string, string?>? Headers { get; set; }
@@ -130,13 +132,12 @@ namespace LogExporter
     public class PipelineConfig
     {
         [JsonPropertyName("normalize")]
-        public NormalizeProcess NormalizeProcessConfig { get; set; }
+        public required NormalizeProcess NormalizeProcessConfig { get; set; }
 
         [JsonPropertyName("tagging")]
-        public TaggingProcess TaggingProcessConfig {  get; set; }
+        public required TaggingProcess TaggingProcessConfig {  get; set; }
 
-        public class NormalizeProcess : FeatureBase
-        {}
+        public class NormalizeProcess : FeatureBase;
 
         public class TaggingProcess : FeatureBase
         {

@@ -40,21 +40,23 @@ namespace LogExporter.Sinks
             _stdout = Console.OpenStandardOutput();
         }
 
-        public void Dispose()
-        {
+        public void Dispose() =>
             // ADR: We intentionally do NOT dispose _stdout. The standard output stream is
             // owned by the process, not by this strategy. Disposing it here would break
             // all console output for the entire DNS server. Dispose only flips the flag
             // so that subsequent ExportAsync calls become no-ops during shutdown.
             _disposed = true;
-        }
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
+            {
                 return;
+            }
 
-            using RecyclableMemoryStream ms = _memoryManager.GetStream("ConsoleExport-Batch");
+#pragma warning disable RCS1261 // Resource can be disposed asynchronously
+            using var ms = _memoryManager.GetStream("ConsoleExport-Batch");
+#pragma warning restore RCS1261 // Resource can be disposed asynchronously
             NdjsonSerializer.WriteBatch(ms, logs);
 
             ms.Position = 0;

@@ -29,7 +29,7 @@ namespace LogExporter.Sinks
     {
         #region variables
 
-        private readonly object _sync = new object();
+        private readonly Lock _sync = new Lock();
         private readonly Dictionary<Type, IOutputSink> _sinks =
             new Dictionary<Type, IOutputSink>();
         private readonly List<IOutputSink> _retiredSinks =
@@ -49,12 +49,13 @@ namespace LogExporter.Sinks
             lock (_sync)
             {
                 if (_disposed)
+                {
                     return;
+                }
 
                 _disposed = true;
 
-                foreach (IOutputSink sink in _sinks.Values)
-                    _retiredSinks.Add(sink);
+                _retiredSinks.AddRange(_sinks.Values);
 
                 _sinks.Clear();
 
@@ -81,8 +82,10 @@ namespace LogExporter.Sinks
                 ObjectDisposedException.ThrowIf(_disposed, this);
 
                 if (!_sinks.TryAdd(sink.GetType(), sink))
+                {
                     throw new InvalidOperationException(
                         $"Strategy of type {sink.GetType().Name} already registered.");
+                }
             }
         }
 
@@ -96,12 +99,16 @@ namespace LogExporter.Sinks
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
 
-                if (_sinks.Remove(type, out IOutputSink? existing))
+                if (_sinks.Remove(type, out var existing))
                 {
                     if (_activeDispatches == 0)
+                    {
                         disposeNow = existing;
+                    }
                     else
+                    {
                         _retiredSinks.Add(existing);
+                    }
                 }
             }
 
@@ -117,24 +124,29 @@ namespace LogExporter.Sinks
         }
 
         /// <summary>
-        /// Executes all configured export strategies for the current batch.
-        ///
+        /// <para>Executes all configured export strategies for the current batch.</para>
+        /// <para>
         /// ADR: ExportManager synchronously awaits each strategy's ExportAsync task.
         /// This guarantees predictable backpressure and ensures no spillover work
         /// continues after shutdown. Strategies are responsible for honoring
         /// cancellation so shutdown stays bounded.
+        /// </para>
         /// </summary>
         public async Task DispatchAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             if (logs == null || logs.Count == 0 || token.IsCancellationRequested)
+            {
                 return;
+            }
 
             List<IOutputSink> snapshot;
 
             lock (_sync)
             {
                 if (_disposed || _sinks.Count == 0)
+                {
                     return;
+                }
 
                 snapshot = new List<IOutputSink>(_sinks.Values);
                 _activeDispatches++;
@@ -144,10 +156,12 @@ namespace LogExporter.Sinks
 
             try
             {
-                List<Task> tasks = new List<Task>(snapshot.Count);
+                var tasks = new List<Task>(snapshot.Count);
 
-                foreach (IOutputSink sink in snapshot)
+                foreach (var sink in snapshot)
+                {
                     tasks.Add(sink.ExportAsync(logs, token));
+                }
 
                 await Task.WhenAll(tasks).ConfigureAwait(false);
             }
@@ -171,10 +185,14 @@ namespace LogExporter.Sinks
         private static void DisposeSinks(List<IOutputSink>? sinks)
         {
             if (sinks is null)
+            {
                 return;
+            }
 
-            foreach (IOutputSink sink in sinks)
+            foreach (var sink in sinks)
+            {
                 sink.Dispose();
+            }
         }
 
         #endregion

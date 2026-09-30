@@ -59,7 +59,9 @@ namespace LogExporter.Sinks
         public void Dispose()
         {
             if (_disposed)
+            {
                 return;
+            }
 
             _writer.Dispose();
             _fileStream.Dispose();
@@ -77,9 +79,13 @@ namespace LogExporter.Sinks
             // cancellable, allowing shutdown to hang indefinitely under I/O pressure.
             // All I/O operations now respect the provided token.
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
+            {
                 return;
+            }
 
-            using RecyclableMemoryStream ms = _memoryManager.GetStream("FileExport-Batch");
+#pragma warning disable RCS1261 // Resource can be disposed asynchronously
+            using var ms = _memoryManager.GetStream("FileExport-Batch");
+#pragma warning restore RCS1261 // Resource can be disposed asynchronously
             NdjsonSerializer.WriteBatch(ms, logs);
             ms.Position = 0;
 

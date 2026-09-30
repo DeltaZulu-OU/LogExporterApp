@@ -60,11 +60,11 @@ namespace LogExporter.Sinks
     {
         #region variables
 
-        const string _appName = "Technitium DNS Server";
-        const string DEFAULT_PROTOCOL = "udp";
-        const int DEFAULT_PORT = 514;
+        private const string _appName = "Technitium DNS Server";
+        private const string DEFAULT_PROTOCOL = "udp";
+        private const int DEFAULT_PORT = 514;
 
-        readonly Facility _facility = Facility.Local6;
+        private readonly Facility _facility = Facility.Local6;
 
         /// <summary>
         /// Number of resolution attempts before the sink gives up.
@@ -75,13 +75,13 @@ namespace LogExporter.Sinks
         /// log while apps are still loading. A short, bounded retry covers these windows without
         /// turning a genuinely wrong address into an endless loop of log messages.
         /// </remarks>
-        const int MaxResolveAttempts = 5;
+        private const int MaxResolveAttempts = 5;
 
         /// <summary>
         /// Delay before the first retry. It doubles on every further attempt
         /// (2, 4, 8 and 16 seconds), so the sink gives up about 30 seconds after the server is ready.
         /// </summary>
-        static readonly TimeSpan InitialResolveRetryDelay = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan InitialResolveRetryDelay = TimeSpan.FromSeconds(2);
 
         /// <summary>
         /// Longest time a single export waits for the logger to be created.
@@ -92,36 +92,47 @@ namespace LogExporter.Sinks
         /// lookup for the first batch. While retries are still running, later batches are dropped
         /// for syslog only.
         /// </remarks>
-        static readonly TimeSpan LoggerWaitTimeout = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan LoggerWaitTimeout = TimeSpan.FromSeconds(1);
 
-        readonly string _address;
-        readonly int _port;
-        readonly string _protocol;
-        readonly Action<string>? _log;
+        private readonly string _address;
+        private readonly int _port;
+        private readonly string _protocol;
+        private readonly Action<string>? _log;
+
+
+        /// <summary>
+        ///     Initializes a new instance of the cancellation token source used to signal disposal and cancel ongoing operations.
+        /// </summary>
         /// <remarks>
         /// Deliberately never disposed. A resolution or retry delay may still observe its token after
         /// <see cref="Dispose"/> returns, and a source without a timer holds no unmanaged resources.
         /// </remarks>
-        readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
-        readonly Task<Serilog.Core.Logger?> _loggerTask;
+        private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
+        private readonly Task<Serilog.Core.Logger?> _loggerTask;
 
-        bool _disposed;
+        private bool _disposed;
 
         // Reuse the message template instead of parsing it per-log
-        const string TemplateText = "{questionsSummary}; RCODE: {rCode}; ANSWER: [{answersSummary}]";
-        static readonly MessageTemplate Template =
+        private const string TemplateText = "{questionsSummary}; RCODE: {rCode}; ANSWER: [{answersSummary}]";
+        private static readonly MessageTemplate Template =
             new MessageTemplateParser().Parse(TemplateText);
 
         #endregion
 
         #region constructor
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SyslogSink"/> class.
+        /// </summary>
         /// <remarks>
         /// The constructor performs no I/O so that it cannot fail on network conditions during app
         /// load. It still validates its arguments, although <see cref="AppConfig"/> does too, because
         /// Serilog reports the same mistakes later and less clearly: a missing host surfaces as
         /// <c>ArgumentException("host")</c> and LOCAL on Windows as a libc <c>DllNotFoundException</c>.
         /// </remarks>
+        /// <param name="address">The network address of the syslog server.</param>
+        /// <param name="port">The port number of the syslog server.</param>
+        /// <param name="protocol">The transport protocol to use (UDP, TCP, TLS, or LOCAL).</param>
         /// <param name="serverReady">Completes once the DNS server can resolve names.</param>
         /// <param name="log">Receives failures that occur after construction, when no caller is left
         /// to catch an exception.</param>
@@ -133,13 +144,19 @@ namespace LogExporter.Sinks
             _log = log;
 
             if (_protocol is not ("tls" or "tcp" or "udp" or "local"))
+            {
                 throw new NotSupportedException($"protocol '{protocol}' is not supported. Use UDP, TCP, TLS, or LOCAL.");
+            }
 
             if (_protocol == "local" && !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
+            {
                 throw new NotSupportedException("protocol LOCAL requires a Unix syslog daemon and is not available on this platform.");
+            }
 
             if (_protocol != "local" && string.IsNullOrWhiteSpace(address))
+            {
                 throw new ArgumentException($"an address is required for protocol {_protocol.ToUpperInvariant()}.");
+            }
 
             _loggerTask = CreateLoggerWhenReadyAsync(serverReady, _disposeCts.Token);
         }
@@ -148,6 +165,9 @@ namespace LogExporter.Sinks
 
         #region IDisposable
 
+        /// <summary>
+        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
+        /// </summary>
         /// <remarks>
         /// The logger may still be under construction, so it is disposed by a continuation rather
         /// than directly. Blocking here until construction finishes could hold up a config reload
@@ -156,7 +176,9 @@ namespace LogExporter.Sinks
         public void Dispose()
         {
             if (_disposed)
+            {
                 return;
+            }
 
             _disposed = true;
             _disposeCts.Cancel();
@@ -165,7 +187,9 @@ namespace LogExporter.Sinks
                 static t =>
                 {
                     if (t.IsCompletedSuccessfully)
+                    {
                         t.Result?.Dispose();
+                    }
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -185,7 +209,9 @@ namespace LogExporter.Sinks
             // shutdown latency.
 
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
+            {
                 return;
+            }
 
             Serilog.Core.Logger? logger;
             try
@@ -202,12 +228,16 @@ namespace LogExporter.Sinks
             }
 
             if (logger is null)
+            {
                 return; // Creation failed and was reported once; the sink stays inactive.
+            }
 
-            foreach (LogEntry log in logs)
+            foreach (var log in logs)
             {
                 if (token.IsCancellationRequested)
+                {
                     break;
+                }
 
                 logger.Write(Convert(log));
             }
@@ -234,9 +264,11 @@ namespace LogExporter.Sinks
             {
                 await serverReady.WaitAsync(token).ConfigureAwait(false);
 
-                string host = _address;
+                var host = _address;
                 if (_protocol == "udp" && !IPAddress.TryParse(_address, out _))
+                {
                     host = (await ResolveWithRetryAsync(_address, token).ConfigureAwait(false)).ToString();
+                }
 
                 return CreateLogger(host);
             }
@@ -270,9 +302,9 @@ namespace LogExporter.Sinks
         /// <exception cref="SocketException">All <see cref="MaxResolveAttempts"/> attempts failed.</exception>
         private async Task<IPAddress> ResolveWithRetryAsync(string host, CancellationToken token)
         {
-            TimeSpan delay = InitialResolveRetryDelay;
+            var delay = InitialResolveRetryDelay;
 
-            for (int attempt = 1; ; attempt++)
+            for (var attempt = 1; ; attempt++)
             {
                 try
                 {
@@ -305,12 +337,14 @@ namespace LogExporter.Sinks
         /// <exception cref="SocketException">The lookup failed or returned no usable address.</exception>
         private static async Task<IPAddress> ResolveAsync(string host, CancellationToken token)
         {
-            IPAddress[] addresses = await Dns.GetHostAddressesAsync(host, token).ConfigureAwait(false);
+            var addresses = await Dns.GetHostAddressesAsync(host, token).ConfigureAwait(false);
 
-            foreach (IPAddress address in addresses)
+            foreach (var address in addresses)
             {
                 if (address.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+                {
                     return address;
+                }
             }
 
             throw new SocketException((int)SocketError.NoData);
@@ -318,7 +352,7 @@ namespace LogExporter.Sinks
 
         private Serilog.Core.Logger CreateLogger(string host)
         {
-            LoggerConfiguration conf = new LoggerConfiguration();
+            var conf = new LoggerConfiguration();
 
             conf = _protocol switch
             {
@@ -352,7 +386,7 @@ namespace LogExporter.Sinks
         {
             // Rough capacity: 9 base + 4 question + some answers + edns
             // This avoids repeated List resizes
-            List<LogEventProperty> properties = new List<LogEventProperty>(16)
+            var properties = new List<LogEventProperty>(16)
             {
                 // Base fields (unchanged semantics)
                 new LogEventProperty(
@@ -378,7 +412,7 @@ namespace LogExporter.Sinks
             // Question
             if (log.Question != null)
             {
-                LogEntry.DnsQuestion question = log.Question;
+                var question = log.Question;
 
                 properties.Add(new LogEventProperty(
                     "qName",
@@ -392,7 +426,7 @@ namespace LogExporter.Sinks
                     "qClass",
                     new ScalarValue(question.QuestionClass.ToString())));
 
-                string questionSummary =
+                var questionSummary =
                     $"QNAME: {question.QuestionName}, " +
                     $"QTYPE: {question.QuestionType}, " +
                     $"QCLASS: {question.QuestionClass}";
@@ -412,10 +446,10 @@ namespace LogExporter.Sinks
             if (log.Answers.Length > 0)
             {
                 // Build answersSummary without LINQ
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < log.Answers.Length; i++)
+                var sb = new StringBuilder();
+                for (var i = 0; i < log.Answers.Length; i++)
                 {
-                    LogEntry.DnsResourceRecord answer = log.Answers[i];
+                    var answer = log.Answers[i];
 
                     properties.Add(new LogEventProperty(
                         $"aName_{i}",
@@ -442,7 +476,10 @@ namespace LogExporter.Sinks
                         new ScalarValue(answer.DnssecStatus.ToString())));
 
                     if (i > 0)
+                    {
                         sb.Append(", ");
+                    }
+
                     sb.Append(answer.RecordData);
                 }
 
@@ -460,9 +497,9 @@ namespace LogExporter.Sinks
             // EDNS
             if (log.EDNS.Length > 0)
             {
-                for (int i = 0; i < log.EDNS.Length; i++)
+                for (var i = 0; i < log.EDNS.Length; i++)
                 {
-                    LogEntry.EDNSLog ednsLog = log.EDNS[i];
+                    var ednsLog = log.EDNS[i];
 
                     properties.Add(new LogEventProperty(
                         $"ednsErrType_{i}",

@@ -23,12 +23,13 @@ using System.Collections.Concurrent;
 namespace LogExporter.Pipeline
 {
     /// <summary>
-    /// Dispatches pipeline actions to all configured IPipelineProcessor strategies.
-    ///
+    /// <para>Dispatches pipeline actions to all configured IPipelineProcessor strategies.</para>
+    /// <para>
     /// ADR: Meta is synchronous and in-process, so this dispatcher
     /// executes strategies sequentially to keep ordering deterministic.
     /// Each processor is isolated with its own exception boundary so that
     /// one faulty processor cannot break the pipeline.
+    /// </para>
     /// </summary>
     public sealed class PipelineDispatcher : IDisposable
     {
@@ -46,11 +47,13 @@ namespace LogExporter.Pipeline
         public void Dispose()
         {
             if (_disposed)
+            {
                 return;
+            }
 
             _disposed = true;
 
-            foreach (IPipelineProcessor enricher in _processors.Values)
+            foreach (var enricher in _processors.Values)
             {
                 try
                 {
@@ -99,7 +102,7 @@ namespace LogExporter.Pipeline
             ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentNullException.ThrowIfNull(type);
 
-            if (_processors.TryRemove(type, out IPipelineProcessor? existing))
+            if (_processors.TryRemove(type, out var existing))
             {
                 try
                 {
@@ -115,7 +118,9 @@ namespace LogExporter.Pipeline
         public bool Any()
         {
             if (_disposed)
+            {
                 return false;
+            }
 
             return !_processors.IsEmpty;
         }
@@ -127,9 +132,11 @@ namespace LogExporter.Pipeline
         public void Run(LogEntry logEntry, Action<Exception>? onError = null)
         {
             if (_disposed || logEntry == null || _processors.IsEmpty)
+            {
                 return;
+            }
 
-            foreach (IPipelineProcessor processor in _processors.Values)
+            foreach (var processor in _processors.Values)
             {
                 try
                 {
