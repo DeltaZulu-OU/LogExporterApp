@@ -27,7 +27,7 @@ namespace LogExporter.Pipeline
     /// <para>Dispatches pipeline actions to all configured IPipelineProcessor strategies.</para>
     /// <para>
     /// ADR: Meta is synchronous and in-process, so this dispatcher
-    /// executes strategies sequentially to keep ordering deterministic.
+    /// executes strategies sequentially in registration order.
     /// Each processor is isolated with its own exception boundary so that
     /// one faulty processor cannot break the pipeline.
     /// </para>
@@ -37,7 +37,9 @@ namespace LogExporter.Pipeline
         #region variables
 
         private readonly Lock _sync = new Lock();
-        private readonly Dictionary<Type, IPipelineProcessor> _processors =
+        private readonly List<IPipelineProcessor> _processors =
+            new List<IPipelineProcessor>();
+        private readonly Dictionary<Type, IPipelineProcessor> _processorsByType =
             new Dictionary<Type, IPipelineProcessor>();
 
         private bool _disposed;
@@ -57,7 +59,7 @@ namespace LogExporter.Pipeline
 
                 _disposed = true;
 
-                foreach (var enricher in _processors.Values)
+                foreach (var enricher in _processors)
                 {
                     try
                     {
@@ -71,6 +73,7 @@ namespace LogExporter.Pipeline
                 }
 
                 _processors.Clear();
+                _processorsByType.Clear();
             }
         }
 
@@ -86,19 +89,16 @@ namespace LogExporter.Pipeline
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
 
-                if (_processors.Remove(processor.GetType(), out var existing))
+                var type = processor.GetType();
+
+                if (_processorsByType.ContainsKey(type))
                 {
-                    try
-                    {
-                        existing.Dispose();
-                    }
-                    catch
-                    {
-                        // Ignore disposal failure; new instance still becomes active.
-                    }
+                    throw new InvalidOperationException(
+                        $"Processor of type {type.Name} already registered.");
                 }
 
-                _processors.Add(processor.GetType(), processor);
+                _processors.Add(processor);
+                _processorsByType.Add(type, processor);
             }
         }
 
@@ -110,8 +110,10 @@ namespace LogExporter.Pipeline
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
 
-                if (_processors.Remove(type, out var existing))
+                if (_processorsByType.Remove(type, out var existing))
                 {
+                    _processors.Remove(existing);
+
                     try
                     {
                         existing.Dispose();
@@ -150,7 +152,7 @@ namespace LogExporter.Pipeline
                     return;
                 }
 
-                foreach (var processor in _processors.Values)
+                foreach (var processor in _processors)
                 {
                     try
                     {
