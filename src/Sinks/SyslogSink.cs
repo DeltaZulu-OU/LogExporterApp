@@ -202,11 +202,8 @@ namespace LogExporter.Sinks
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
-            // ADR: SyslogSink export previously used Task.Run with a synchronous loop,
-            // causing threadpool churn and preventing timely shutdown. We now execute
-            // sequentially on the caller's async context and check cancellation between
-            // log writes. Serilog remains synchronous, but cancellation ensures bounded
-            // shutdown latency.
+            // Serilog writes are synchronous. This sink has a dedicated worker queue, so
+            // sequential writes here cannot block the other configured sinks.
 
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
             {

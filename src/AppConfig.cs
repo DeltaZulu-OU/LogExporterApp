@@ -76,7 +76,7 @@ namespace LogExporter
         [Range(1, int.MaxValue, ErrorMessage = "maxQueueSize must be greater than zero.")]
 
         [JsonPropertyName("maxQueueSize")]
-        public int MaxQueueSize { get; set; } = int.MaxValue;
+        public int MaxQueueSize { get; set; } = 100000;
 
         [JsonPropertyName("enableEdnsLogging")]
         public bool EnableEdnsLogging { get; set; } = true;

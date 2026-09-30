@@ -24,6 +24,8 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.IO;
 
 namespace LogExporter.Sinks
@@ -35,6 +37,7 @@ namespace LogExporter.Sinks
         private readonly Uri _endpoint;
         private readonly HttpClient _httpClient;
         private static readonly string Hostname = Dns.GetHostName();
+        private static readonly JsonSerializerOptions HttpSerializerOptions = CreateHttpSerializerOptions();
 
         private readonly RecyclableMemoryStreamManager _memoryManager = new();
         private bool _disposed;
@@ -117,15 +120,18 @@ namespace LogExporter.Sinks
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
 
             // HTTP collectors need the responding cluster member in each event.
-            NdjsonSerializer.WriteBatchWithHostname(ms, logs, Hostname);
+            NdjsonSerializer.WriteBatch(ms, logs, HttpSerializerOptions);
 
             ms.Position = 0;
 
-            using var content = new StreamContent(ms);
-            content.Headers.Add("Content-Type", "application/x-ndjson");
+            using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
+            {
+                Content = new StreamContent(ms)
+            };
+            request.Content.Headers.Add("Content-Type", "application/x-ndjson");
 
             using var response = await _httpClient
-                .PostAsync(_endpoint, content, token)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token)
                 .ConfigureAwait(false);
 
             // Fail if server rejects logs
@@ -133,5 +139,28 @@ namespace LogExporter.Sinks
         }
 
         #endregion public
+
+        private static JsonSerializerOptions CreateHttpSerializerOptions()
+        {
+            var resolver = new DefaultJsonTypeInfoResolver();
+            resolver.Modifiers.Add(typeInfo =>
+            {
+                if (typeInfo.Type != typeof(LogEntry))
+                {
+                    return;
+                }
+
+                var hostname = typeInfo.CreateJsonPropertyInfo(typeof(string), "hostname");
+                hostname.Get = _ => Hostname;
+                typeInfo.Properties.Add(hostname);
+            });
+
+            var options = new JsonSerializerOptions(LogEntry.DnsLogSerializerOptions.Default)
+            {
+                TypeInfoResolver = resolver
+            };
+
+            return options;
+        }
     }
 }

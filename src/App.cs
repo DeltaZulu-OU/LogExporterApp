@@ -236,7 +236,7 @@ namespace LogExporter
             IPEndPoint remoteEP, DnsTransportProtocol protocol,
             DnsDatagram response)
         {
-            // Signalled before the _enableLogging check: readiness describes the server, not this
+            // Signalled before the ingestion-state check: readiness describes the server, not this
             // app's state, and must hold for a later reload that enables a syslog sink. The
             // IsCompleted read keeps the per-query cost to a plain field read once signalled.
             if (!_dnsServerReady.Task.IsCompleted)
@@ -299,6 +299,8 @@ namespace LogExporter
                 {
                     await backgroundTask.ConfigureAwait(false);
                 }
+
+                await _sinkDispatcher.DrainAsync().ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (pipelineCancellation?.IsCancellationRequested is true)
             {
@@ -434,13 +436,13 @@ namespace LogExporter
         {
             var sinks = _config!.Sinks;
 
-            ConfigureConsoleSink(sinks.ConsoleSinkConfig);
-            ConfigureFileSink(sinks.FileSinkConfig);
-            ConfigureHttpSink(sinks.HttpSinkConfig);
-            ConfigureSyslogSink(sinks.SyslogSinkConfig);
+            ConfigureConsoleSink(sinks.ConsoleSinkConfig, sinks.MaxQueueSize);
+            ConfigureFileSink(sinks.FileSinkConfig, sinks.MaxQueueSize);
+            ConfigureHttpSink(sinks.HttpSinkConfig, sinks.MaxQueueSize);
+            ConfigureSyslogSink(sinks.SyslogSinkConfig, sinks.MaxQueueSize);
         }
 
-        private void ConfigureConsoleSink(SinkConfig.ConsoleSink? config)
+        private void ConfigureConsoleSink(SinkConfig.ConsoleSink? config, int queueCapacity)
         {
             _sinkDispatcher.Remove(typeof(ConsoleSink));
             if (config?.Enabled is not true)
@@ -450,7 +452,11 @@ namespace LogExporter
 
             try
             {
-                _sinkDispatcher.Add(new ConsoleSink());
+                _sinkDispatcher.Add(
+                    new ConsoleSink(),
+                    queueCapacity,
+                    ex => _dnsServer?.WriteLog(ex),
+                    message => _dnsServer?.WriteLog(message));
             }
             catch (Exception ex)
             {
@@ -458,7 +464,7 @@ namespace LogExporter
             }
         }
 
-        private void ConfigureFileSink(SinkConfig.FileSink? config)
+        private void ConfigureFileSink(SinkConfig.FileSink? config, int queueCapacity)
         {
             _sinkDispatcher.Remove(typeof(FileSink));
             if (config?.Enabled is not true)
@@ -469,7 +475,11 @@ namespace LogExporter
             try
             {
                 AppConfig.ValidateObject(config);
-                _sinkDispatcher.Add(new FileSink(config.Path));
+                _sinkDispatcher.Add(
+                    new FileSink(config.Path),
+                    queueCapacity,
+                    ex => _dnsServer?.WriteLog(ex),
+                    message => _dnsServer?.WriteLog(message));
             }
             catch (System.ComponentModel.DataAnnotations.ValidationException ex)
             {
@@ -497,7 +507,7 @@ namespace LogExporter
             }
         }
 
-        private void ConfigureHttpSink(SinkConfig.HttpSink? config)
+        private void ConfigureHttpSink(SinkConfig.HttpSink? config, int queueCapacity)
         {
             _sinkDispatcher.Remove(typeof(HttpSink));
             if (config?.Enabled is not true)
@@ -508,7 +518,11 @@ namespace LogExporter
             try
             {
                 AppConfig.ValidateObject(config);
-                _sinkDispatcher.Add(new HttpSink(config.Endpoint, config.Headers));
+                _sinkDispatcher.Add(
+                    new HttpSink(config.Endpoint, config.Headers),
+                    queueCapacity,
+                    ex => _dnsServer?.WriteLog(ex),
+                    message => _dnsServer?.WriteLog(message));
             }
             catch (System.ComponentModel.DataAnnotations.ValidationException ex)
             {
@@ -525,7 +539,7 @@ namespace LogExporter
             }
         }
 
-        private void ConfigureSyslogSink(SinkConfig.SyslogSink? config)
+        private void ConfigureSyslogSink(SinkConfig.SyslogSink? config, int queueCapacity)
         {
             _sinkDispatcher.Remove(typeof(SyslogSink));
             if (config?.Enabled is not true)
@@ -542,7 +556,10 @@ namespace LogExporter
                                    config.Port,
                                    config.Protocol,
                                    _dnsServerReady.Task,
-                                   message => _dnsServer?.WriteLog(message)));
+                                   message => _dnsServer?.WriteLog(message)),
+                    queueCapacity,
+                    ex => _dnsServer?.WriteLog(ex),
+                    message => _dnsServer?.WriteLog(message));
             }
             catch (System.ComponentModel.DataAnnotations.ValidationException ex)
             {

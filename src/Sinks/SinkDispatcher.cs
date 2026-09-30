@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace LogExporter.Sinks
@@ -29,13 +30,13 @@ namespace LogExporter.Sinks
     {
         #region variables
 
-        private readonly Lock _sync = new Lock();
-        private readonly Dictionary<Type, IOutputSink> _sinks =
-            new Dictionary<Type, IOutputSink>();
-        private readonly List<IOutputSink> _retiredSinks =
-            new List<IOutputSink>();
+        private const int BULK_INSERT_COUNT = 1000;
+        private static readonly TimeSpan BatchDelay = TimeSpan.FromMilliseconds(25);
 
-        private int _activeDispatches;
+        private readonly Lock _sync = new Lock();
+        private readonly Dictionary<Type, SinkWorker> _workers =
+            new Dictionary<Type, SinkWorker>();
+
         private bool _disposed;
 
         #endregion
@@ -44,7 +45,7 @@ namespace LogExporter.Sinks
 
         public void Dispose()
         {
-            List<IOutputSink>? disposeNow = null;
+            List<SinkWorker> workers;
 
             lock (_sync)
             {
@@ -54,38 +55,63 @@ namespace LogExporter.Sinks
                 }
 
                 _disposed = true;
+                workers = new List<SinkWorker>(_workers.Values);
+                _workers.Clear();
+            }
 
-                _retiredSinks.AddRange(_sinks.Values);
+            Exception? failure = null;
 
-                _sinks.Clear();
-
-                if (_activeDispatches == 0 && _retiredSinks.Count > 0)
+            foreach (var worker in workers)
+            {
+                try
                 {
-                    disposeNow = new List<IOutputSink>(_retiredSinks);
-                    _retiredSinks.Clear();
+                    worker.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    failure ??= ex;
                 }
             }
 
-            DisposeSinks(disposeNow);
+            if (failure is not null)
+            {
+                throw failure;
+            }
         }
 
         #endregion
 
         #region public
 
-        public void Add(IOutputSink sink)
+        public void Add(
+            IOutputSink sink,
+            int queueCapacity,
+            Action<Exception>? onError = null,
+            Action<string>? onLog = null)
         {
             ArgumentNullException.ThrowIfNull(sink);
 
-            lock (_sync)
+            try
             {
-                ObjectDisposedException.ThrowIf(_disposed, this);
-
-                if (!_sinks.TryAdd(sink.GetType(), sink))
+                lock (_sync)
                 {
-                    throw new InvalidOperationException(
-                        $"Strategy of type {sink.GetType().Name} already registered.");
+                    ObjectDisposedException.ThrowIf(_disposed, this);
+
+                    if (_workers.ContainsKey(sink.GetType()))
+                    {
+                        throw new InvalidOperationException(
+                            $"Strategy of type {sink.GetType().Name} already registered.");
+                    }
+
+                    _workers.Add(
+                        sink.GetType(),
+                        new SinkWorker(sink, queueCapacity, onError, onLog));
                 }
+            }
+            catch
+            {
+                sink.Dispose();
+                throw;
             }
         }
 
@@ -93,108 +119,268 @@ namespace LogExporter.Sinks
         {
             ArgumentNullException.ThrowIfNull(type);
 
-            IOutputSink? disposeNow = null;
+            SinkWorker? worker = null;
 
             lock (_sync)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-
-                if (_sinks.Remove(type, out var existing))
-                {
-                    if (_activeDispatches == 0)
-                    {
-                        disposeNow = existing;
-                    }
-                    else
-                    {
-                        _retiredSinks.Add(existing);
-                    }
-                }
+                _workers.Remove(type, out worker);
             }
 
-            disposeNow?.Dispose();
+            worker?.Dispose();
         }
 
         public bool Any()
         {
             lock (_sync)
             {
-                return !_disposed && _sinks.Count > 0;
+                return !_disposed && _workers.Count > 0;
             }
         }
 
-        /// <summary>
-        /// <para>Executes all configured export strategies for the current batch.</para>
-        /// <para>
-        /// ADR: ExportManager synchronously awaits each strategy's ExportAsync task.
-        /// This guarantees predictable backpressure and ensures no spillover work
-        /// continues after shutdown. Strategies are responsible for honoring
-        /// cancellation so shutdown stays bounded.
-        /// </para>
-        /// </summary>
-        public async Task DispatchAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public Task DispatchAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             if (logs == null || logs.Count == 0 || token.IsCancellationRequested)
             {
-                return;
+                return Task.CompletedTask;
             }
 
-            List<IOutputSink> snapshot;
+            List<SinkWorker> workers;
 
             lock (_sync)
             {
-                if (_disposed || _sinks.Count == 0)
+                if (_disposed || _workers.Count == 0)
+                {
+                    return Task.CompletedTask;
+                }
+
+                workers = new List<SinkWorker>(_workers.Values);
+            }
+
+            foreach (var worker in workers)
+            {
+                worker.Enqueue(logs);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public async Task DrainAsync()
+        {
+            List<SinkWorker> workers;
+
+            lock (_sync)
+            {
+                if (_workers.Count == 0)
                 {
                     return;
                 }
 
-                snapshot = new List<IOutputSink>(_sinks.Values);
-                _activeDispatches++;
+                workers = new List<SinkWorker>(_workers.Values);
             }
 
-            List<IOutputSink>? disposeNow = null;
+            var tasks = new Task[workers.Count];
 
-            try
+            for (var i = 0; i < workers.Count; i++)
             {
-                var tasks = new List<Task>(snapshot.Count);
-
-                foreach (var sink in snapshot)
-                {
-                    tasks.Add(sink.ExportAsync(logs, token));
-                }
-
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-            finally
-            {
-                lock (_sync)
-                {
-                    _activeDispatches--;
-
-                    if (_activeDispatches == 0 && _retiredSinks.Count > 0)
-                    {
-                        disposeNow = new List<IOutputSink>(_retiredSinks);
-                        _retiredSinks.Clear();
-                    }
-                }
-
-                DisposeSinks(disposeNow);
-            }
-        }
-
-        private static void DisposeSinks(List<IOutputSink>? sinks)
-        {
-            if (sinks is null)
-            {
-                return;
+                workers[i].Complete();
+                tasks[i] = workers[i].Completion;
             }
 
-            foreach (var sink in sinks)
-            {
-                sink.Dispose();
-            }
+            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
         #endregion
+
+        private sealed class SinkWorker : IDisposable
+        {
+            private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
+
+            private readonly IOutputSink _sink;
+            private readonly Channel<LogEntry> _queue;
+            private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
+            private readonly Action<Exception>? _onError;
+            private readonly Action<string>? _onLog;
+
+            private long _droppedEvents;
+            private long _lastDropTicks = DateTime.UtcNow.Ticks;
+            private long _lastErrorTicks;
+            private bool _disposed;
+
+            public SinkWorker(
+                IOutputSink sink,
+                int queueCapacity,
+                Action<Exception>? onError,
+                Action<string>? onLog)
+            {
+                _sink = sink;
+                _onError = onError;
+                _onLog = onLog;
+
+                _queue = Channel.CreateBounded<LogEntry>(
+                    new BoundedChannelOptions(Math.Max(1, queueCapacity))
+                    {
+                        SingleReader = true,
+                        SingleWriter = false,
+                        FullMode = BoundedChannelFullMode.DropWrite
+                    },
+                    _ => OnDropped());
+
+                Completion = RunAsync();
+            }
+
+            public Task Completion { get; }
+
+            public void Enqueue(IReadOnlyList<LogEntry> logs)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                for (var i = 0; i < logs.Count; i++)
+                {
+                    _queue.Writer.TryWrite(logs[i]);
+                }
+            }
+
+            public void Complete() => _queue.Writer.TryComplete();
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                Complete();
+
+                try
+                {
+                    Completion.GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+                {
+                }
+                finally
+                {
+                    _cancellation.Cancel();
+                    _cancellation.Dispose();
+                    _sink.Dispose();
+                }
+            }
+
+            private async Task RunAsync()
+            {
+                var batch = new List<LogEntry>(BULK_INSERT_COUNT);
+
+                try
+                {
+                    while (await _queue.Reader
+                        .WaitToReadAsync(_cancellation.Token)
+                        .ConfigureAwait(false))
+                    {
+                        while (batch.Count < BULK_INSERT_COUNT &&
+                               _queue.Reader.TryRead(out var entry))
+                        {
+                            batch.Add(entry);
+                        }
+
+                        if (batch.Count < BULK_INSERT_COUNT &&
+                            !_queue.Reader.Completion.IsCompleted)
+                        {
+                            await Task.Delay(BatchDelay, _cancellation.Token)
+                                .ConfigureAwait(false);
+
+                            while (batch.Count < BULK_INSERT_COUNT &&
+                                   _queue.Reader.TryRead(out var nextEntry))
+                            {
+                                batch.Add(nextEntry);
+                            }
+                        }
+
+                        if (batch.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            await _sink.ExportAsync(batch, _cancellation.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+                        {
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            ReportError(ex);
+                        }
+                        finally
+                        {
+                            batch.Clear();
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    ReportError(ex);
+                }
+            }
+
+            private void OnDropped()
+            {
+                Interlocked.Increment(ref _droppedEvents);
+
+                var nowTicks = DateTime.UtcNow.Ticks;
+                var lastTicks = Volatile.Read(ref _lastDropTicks);
+
+                if (new TimeSpan(nowTicks - lastTicks) >= DropLogInterval &&
+                    Interlocked.CompareExchange(ref _lastDropTicks, nowTicks, lastTicks) == lastTicks)
+                {
+                    var dropped = Interlocked.Exchange(ref _droppedEvents, 0);
+                    try
+                    {
+                        _onLog?.Invoke(
+                            $"{_sink.GetType().Name} queue full; dropped {dropped} log entries over last {DropLogInterval.TotalSeconds:F0}s.");
+                    }
+                    catch
+                    {
+                        // Observability must never break sink isolation.
+                    }
+                }
+            }
+
+            private void ReportError(Exception ex)
+            {
+                var nowTicks = DateTime.UtcNow.Ticks;
+                var lastTicks = Volatile.Read(ref _lastErrorTicks);
+
+                if (lastTicks != 0 &&
+                    new TimeSpan(nowTicks - lastTicks) < DropLogInterval)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref _lastErrorTicks, nowTicks, lastTicks) != lastTicks)
+                {
+                    return;
+                }
+
+                try
+                {
+                    _onError?.Invoke(ex);
+                }
+                catch
+                {
+                    // Error reporting must not terminate this sink worker.
+                }
+            }
+        }
     }
 }

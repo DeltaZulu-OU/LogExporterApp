@@ -13,40 +13,19 @@ namespace LogExporter.Sinks
     /// </summary>
     public static class NdjsonSerializer
     {
-        public static void WriteBatch(Stream target, IReadOnlyList<LogEntry> logs)
-        {
-            using var writer = CreateWriter(target);
+        public static void WriteBatch(Stream target, IReadOnlyList<LogEntry> logs) =>
+            WriteBatch(target, logs, LogEntry.DnsLogSerializerOptions.Default);
 
-            for (var i = 0; i < logs.Count; i++)
-            {
-                JsonSerializer.Serialize(writer, logs[i], LogEntry.DnsLogSerializerOptions.Default);
-                CompleteRecord(writer, target);
-            }
-        }
-
-        public static void WriteBatchWithHostname(
+        public static void WriteBatch(
             Stream target,
             IReadOnlyList<LogEntry> logs,
-            string hostname)
+            JsonSerializerOptions options)
         {
             using var writer = CreateWriter(target);
 
             for (var i = 0; i < logs.Count; i++)
             {
-                var element = JsonSerializer.SerializeToElement(
-                    logs[i],
-                    LogEntry.DnsLogSerializerOptions.Default);
-
-                writer.WriteStartObject();
-
-                foreach (var property in element.EnumerateObject())
-                {
-                    property.WriteTo(writer);
-                }
-
-                writer.WriteString("hostname", hostname);
-                writer.WriteEndObject();
-
+                JsonSerializer.Serialize(writer, logs[i], options);
                 CompleteRecord(writer, target);
             }
         }
