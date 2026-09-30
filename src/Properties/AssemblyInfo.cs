@@ -1,3 +1,3 @@
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("LogExporterApp.Validation")]
+[assembly: InternalsVisibleTo("LogExporterApp.Tests")]

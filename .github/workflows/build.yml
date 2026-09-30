@@ -63,7 +63,7 @@ jobs:
         run: |
           msbuild "src/LogExporterApp.slnx" /restore /p:Configuration=Release /p:Platform="Any CPU" /p:RestorePackagesConfig=true /m
 
-      - name: Run validation harness
+      - name: Run unit tests
         shell: pwsh
         run: |
-          dotnet run --project "tests/LogExporterApp.Validation/LogExporterApp.Validation.csproj" --configuration Release
+          dotnet test "tests/LogExporterApp.Tests/LogExporterApp.Tests.csproj" --configuration Release --no-build
