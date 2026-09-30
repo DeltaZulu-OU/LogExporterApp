@@ -5,8 +5,8 @@ using System.Text.Json;
 namespace LogExporter.Sinks
 {
     /// <summary>
-    /// ADR: NDJSON serialization is used by all export strategies and must remain
-    /// consistent across sinks. Previously, each strategy copy/pasted its own
+    /// ADR: NDJSON serialization is shared by sinks that emit the JSON contract and must remain
+    /// consistent between those sinks. Previously, each strategy copy/pasted its own
     /// serialization loop, creating long-term maintenance and drift risks.
     /// This helper centralizes NDJSON formatting so changes occur in one place,
     /// ensuring consistency, reducing boilerplate, and eliminating subtle bugs.
