@@ -22,6 +22,7 @@ using LogExporter.Pipeline;
 using LogExporter.Sinks;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Channels;
@@ -56,6 +57,21 @@ namespace LogExporter
         private long _droppedCount;
         private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
         private long _lastDropTicks;
+
+        /// <summary>
+        /// Completes on the first query log to signal that the DNS server is serving.
+        /// </summary>
+        /// <remarks>
+        /// <c>IDnsServer</c> has no readiness event, and Technitium loads apps before it binds
+        /// its listeners. Waiting inside <see cref="InitializeAsync"/> would deadlock startup,
+        /// because the server waits for app initialization before it starts listening. The first
+        /// logged query is the earliest proof that the server answers queries, so sinks that must
+        /// resolve names (see <see cref="SyslogSink"/>) wait on this task in the background.
+        /// It outlives config reloads because the server stays up while this instance is
+        /// reinitialized. Continuations run asynchronously so they never execute on the query path.
+        /// </remarks>
+        private readonly TaskCompletionSource _dnsServerReady =
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         #endregion variables
 
@@ -206,6 +222,12 @@ namespace LogExporter
             IPEndPoint remoteEP, DnsTransportProtocol protocol,
             DnsDatagram response)
         {
+            // Signalled before the _enableLogging check: readiness describes the server, not this
+            // app's state, and must hold for a later reload that enables a syslog sink. The
+            // IsCompleted read keeps the per-query cost to a plain field read once signalled.
+            if (!_dnsServerReady.Task.IsCompleted)
+                _dnsServerReady.TrySetResult();
+
             if (!_enableLogging)
                 return Task.CompletedTask;
 
@@ -391,32 +413,151 @@ namespace LogExporter
             }
         }
 
+        /// <summary>
+        /// Replaces every sink according to the current configuration.
+        /// </summary>
+        /// <remarks>
+        /// Each sink is configured in isolation. A sink that cannot be created is reported with a
+        /// concise, sink-specific message and skipped, so one broken target (bad path, invalid
+        /// endpoint) does not disable every other sink or abort <see cref="InitializeAsync"/>.
+        /// </remarks>
         private void ConfigureSinks()
         {
-            var sinks = _config!.Sinks;
+            SinkConfig sinks = _config!.Sinks;
+
+            ConfigureConsoleSink(sinks.ConsoleSinkConfig);
+            ConfigureFileSink(sinks.FileSinkConfig);
+            ConfigureHttpSink(sinks.HttpSinkConfig);
+            ConfigureSyslogSink(sinks.SyslogSinkConfig);
+        }
+
+        private void ConfigureConsoleSink(SinkConfig.ConsoleSink? config)
+        {
             _sinkDispatcher.Remove(typeof(ConsoleSink));
-            if (sinks.ConsoleSinkConfig != null && sinks.ConsoleSinkConfig.Enabled)
+            if (config?.Enabled is not true)
+                return;
+
+            try
+            {
                 _sinkDispatcher.Add(new ConsoleSink());
+            }
+            catch (Exception ex)
+            {
+                LogUnexpectedSinkFailure("Console", ex);
+            }
+        }
 
+        private void ConfigureFileSink(SinkConfig.FileSink? config)
+        {
             _sinkDispatcher.Remove(typeof(FileSink));
-            if (sinks.FileSinkConfig?.Enabled is true)
-                _sinkDispatcher.Add(new FileSink(sinks.FileSinkConfig.Path));
+            if (config?.Enabled is not true)
+                return;
 
+            try
+            {
+                AppConfig.ValidateObject(config);
+                _sinkDispatcher.Add(new FileSink(config.Path));
+            }
+            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
+            {
+                LogSinkDisabled("File", ex.Message);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogSinkDisabled("File", $"access to '{config.Path}' is denied. Check the permissions of the DNS server account.");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                LogSinkDisabled("File", $"the directory for '{config.Path}' does not exist.");
+            }
+            catch (IOException ex)
+            {
+                LogSinkDisabled("File", $"cannot open '{config.Path}': {ex.Message}");
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+            {
+                LogSinkDisabled("File", $"'{config.Path}' is not a valid file path.");
+            }
+            catch (Exception ex)
+            {
+                LogUnexpectedSinkFailure("File", ex);
+            }
+        }
+
+        private void ConfigureHttpSink(SinkConfig.HttpSink? config)
+        {
             _sinkDispatcher.Remove(typeof(HttpSink));
-            if (sinks.HttpSinkConfig?.Enabled is true)
-            {
-                _sinkDispatcher.Add(
-                    new HttpSink(sinks.HttpSinkConfig.Endpoint, sinks.HttpSinkConfig.Headers));
-            }
+            if (config?.Enabled is not true)
+                return;
 
-            _sinkDispatcher.Remove(typeof(SyslogSink));
-            if (sinks.SyslogSinkConfig?.Enabled is true)
+            try
             {
-                _sinkDispatcher.Add(
-                    new SyslogSink(sinks.SyslogSinkConfig.Address,
-                                   sinks.SyslogSinkConfig.Port!.Value,
-                                   sinks.SyslogSinkConfig.Protocol));
+                AppConfig.ValidateObject(config);
+                _sinkDispatcher.Add(new HttpSink(config.Endpoint, config.Headers));
             }
+            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
+            {
+                LogSinkDisabled("HTTP", ex.Message);
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
+            {
+                // HttpSink raises these with messages that already name the endpoint or header.
+                LogSinkDisabled("HTTP", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                LogUnexpectedSinkFailure("HTTP", ex);
+            }
+        }
+
+        private void ConfigureSyslogSink(SinkConfig.SyslogSink? config)
+        {
+            _sinkDispatcher.Remove(typeof(SyslogSink));
+            if (config?.Enabled is not true)
+                return;
+
+            try
+            {
+                AppConfig.ValidateObject(config);
+                // Host name resolution is deferred until the DNS server is serving; see SyslogSink.
+                _sinkDispatcher.Add(
+                    new SyslogSink(config.Address,
+                                   config.Port,
+                                   config.Protocol,
+                                   _dnsServerReady.Task,
+                                   message => _dnsServer?.WriteLog(message)));
+            }
+            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
+            {
+                LogSinkDisabled("Syslog", ex.Message);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+            {
+                // SyslogSink raises these with messages that already name the offending value.
+                LogSinkDisabled("Syslog", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                LogUnexpectedSinkFailure("Syslog", ex);
+            }
+        }
+
+        /// <remarks>
+        /// Expected failures are logged without the exception. They describe a configuration or
+        /// environment problem the administrator must fix, and a stack trace only hides the reason.
+        /// </remarks>
+        private void LogSinkDisabled(string sinkName, string reason)
+        {
+            _dnsServer?.WriteLog($"{sinkName} sink is disabled: {reason}");
+        }
+
+        /// <remarks>
+        /// Unknown failures keep the stack trace because they point to a bug rather than to a
+        /// configuration mistake.
+        /// </remarks>
+        private void LogUnexpectedSinkFailure(string sinkName, Exception ex)
+        {
+            _dnsServer?.WriteLog($"{sinkName} sink is disabled due to an unexpected error.", ex);
         }
 
         private void ConfigurePipeline()

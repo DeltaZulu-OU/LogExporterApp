@@ -21,7 +21,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 using Microsoft.IO;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,10 +40,20 @@ namespace LogExporter.Sinks
 
         #region constructor
 
+        /// <remarks>
+        /// <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> accepts schemes such as <c>ftp</c> and
+        /// <c>file</c>, which <see cref="HttpClient"/> rejects only on the first export. Checking the
+        /// scheme here reports the mistake when the configuration is loaded. The client is disposed
+        /// before throwing because a failed constructor leaves no instance for the caller to dispose.
+        /// </remarks>
         public HttpSink(string endpoint, Dictionary<string, string?>? headers = null)
         {
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri))
-                throw new ArgumentException("Invalid HTTP endpoint.", nameof(endpoint));
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                throw new ArgumentException(
+                    $"'{endpoint}' is not a valid endpoint. An absolute http:// or https:// URL is required.");
+            }
 
             _endpoint = uri;
             _httpClient = new HttpClient();
@@ -54,9 +63,13 @@ namespace LogExporter.Sinks
                 return;
             }
 
-            foreach (var kv in headers.Where(kv => !_httpClient.DefaultRequestHeaders.TryAddWithoutValidation(kv.Key, kv.Value)))
+            foreach (var kv in headers)
             {
-                throw new FormatException($"Failed to add HTTP header '{kv.Key}'.");
+                if (_httpClient.DefaultRequestHeaders.TryAddWithoutValidation(kv.Key, kv.Value))
+                    continue;
+
+                _httpClient.Dispose();
+                throw new FormatException($"'{kv.Key}' is not a valid HTTP request header.");
             }
         }
 

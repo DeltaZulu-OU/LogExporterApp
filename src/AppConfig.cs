@@ -52,21 +52,10 @@ namespace LogExporter
 
             ValidateObject(config);
 
-            // Validate enabled targets only — disabled ones may be incomplete by design.
-
-            if (config.Sinks.FileSinkConfig?.Enabled is true)
-                ValidateObject(config.Sinks.FileSinkConfig);
-
-            if (config.Sinks.HttpSinkConfig?.Enabled is true)
-                ValidateObject(config.Sinks.HttpSinkConfig);
-
-            if (config.Sinks.SyslogSinkConfig?.Enabled is true)
-                ValidateObject(config.Sinks.SyslogSinkConfig);
-
             return config;
         }
 
-        private static void ValidateObject(object instance)
+        internal static void ValidateObject(object instance)
         {
             ValidationContext ctx = new ValidationContext(instance);
             Validator.ValidateObject(instance, ctx, validateAllProperties: true);
@@ -102,7 +91,6 @@ namespace LogExporter
 
         public class SyslogSink : FeatureBase
         {
-            [Required(ErrorMessage = "syslog.address is required when syslog logging is enabled.")]
             [JsonPropertyName("address")]
             public string Address { get; set; }
 

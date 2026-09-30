@@ -50,7 +50,7 @@ Provide JSON configuration similar to the following:
     },
     "syslog": {
       "enabled": false,
-      "address": "10.0.0.5",
+      "address": "syslog.example.com",
       "port": 6514,
       "protocol": "TLS"
     }
@@ -77,6 +77,8 @@ Provide JSON configuration similar to the following:
 * `file` writes logs to the configured local file path.
 * `http` sends logs to the configured endpoint using HTTP POST. When `ndjson` is `true`, batches are sent as newline-delimited JSON.
 * `syslog` exports logs to a Syslog server. Supported protocols are `UDP`, `TCP`, `TLS`, and `LOCAL`.
+  * `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it. `LOCAL` ignores `address`.
+  * An FQDN is resolved once the DNS server starts answering queries, not while the app loads, and resolution is retried briefly if it fails. With `UDP`, the resolved address is kept until the configuration is saved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
 
 At least one sink must be enabled. If no sink is configured, logging remains disabled.
 
