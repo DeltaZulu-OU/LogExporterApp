@@ -50,7 +50,9 @@ namespace LogExporter
             ResponseType = response.Tag == null ? DnsServerResponseType.Recursive : (DnsServerResponseType)response.Tag;
 
             if ((ResponseType == DnsServerResponseType.Recursive) && (response.Metadata is not null))
+            {
                 ResponseRtt = response.Metadata.RoundTripTime;
+            }
 
             ResponseCode = response.RCODE;
 
@@ -86,23 +88,23 @@ namespace LogExporter
                 Answers = EmptyAnswers;
             }
 
-            PopulateEDNSLogs(response, ednsLogging);
-        }
-
-        private void PopulateEDNSLogs(DnsDatagram response, bool ednsLogging)
-        {
-            // Handle EDNS - reuse empty list when no EDNS logging or no errors
             if (!ednsLogging || response.EDNS is null)
             {
                 EDNS = EmptyEdns;
-                return;
+            }
+            else
+            {
+                EDNS = PopulateEDNSLogs(response);
             }
 
+        }
+
+        private EDNSLog[] PopulateEDNSLogs(DnsDatagram response)
+        {
             List<EDnsOption> ednsErrors = response.EDNS.Options.Where(o => o.Code == EDnsOptionCode.EXTENDED_DNS_ERROR).ToList();
             if (ednsErrors.Count == 0)
             {
-                EDNS = EmptyEdns;
-                return;
+                return EmptyEdns;
             }
 
             List<EDNSLog> edns = new List<EDNSLog>(ednsErrors.Count);
@@ -116,7 +118,9 @@ namespace LogExporter
 
                 string? raw = extendedErrorLog.Data?.ToString();
                 if (string.IsNullOrWhiteSpace(raw))
+                {
                     continue;
+                }
 
                 raw = raw.Replace("[", "").Replace("]", "");
 
@@ -143,7 +147,7 @@ namespace LogExporter
             }
 
             // If no valid EDNS entries were added, use the empty list
-            EDNS = edns.Count == 0 ? EmptyEdns : edns.ToArray();
+            return edns.Count > 0 ? edns.ToArray() : EmptyEdns;
         }
 
         public DnsResourceRecord[] Answers { get; }

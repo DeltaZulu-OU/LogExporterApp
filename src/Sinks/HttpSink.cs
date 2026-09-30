@@ -18,12 +18,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-using Microsoft.IO;
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.IO;
 
 namespace LogExporter.Sinks
 {
@@ -40,6 +40,11 @@ namespace LogExporter.Sinks
 
         #region constructor
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="HttpSink"/> class.
+        /// </summary>
+        /// <param name="endpoint">The absolute HTTP or HTTPS endpoint URL.</param>
+        /// <param name="headers">Optional collection of default HTTP request headers.</param>
         /// <remarks>
         /// <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> accepts schemes such as <c>ftp</c> and
         /// <c>file</c>, which <see cref="HttpClient"/> rejects only on the first export. Checking the
@@ -96,7 +101,7 @@ namespace LogExporter.Sinks
             // worker may still flush a few batches while shutdown is in progress. Treating
             // late calls as no-ops avoids spurious ObjectDisposedExceptions during normal
             // teardown.
-            if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
+            if (_disposed || logs == null || logs.Count == 0 || token.IsCancellationRequested)
                 return;
 
             using RecyclableMemoryStream ms = _memoryManager.GetStream("HttpExport-Batch");

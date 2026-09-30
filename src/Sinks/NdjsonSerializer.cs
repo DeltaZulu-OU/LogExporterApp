@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Text.Json;
 
 namespace LogExporter.Sinks
@@ -13,6 +14,8 @@ namespace LogExporter.Sinks
     /// </summary>
     public static class NdjsonSerializer
     {
+        private static readonly string _hostname = Dns.GetHostName();
+
         public static void WriteBatch(Stream target, IReadOnlyList<LogEntry> logs)
         {
             using Utf8JsonWriter writer = new Utf8JsonWriter(target, new JsonWriterOptions
@@ -25,6 +28,7 @@ namespace LogExporter.Sinks
             for (int i = 0; i < logs.Count; i++)
             {
                 JsonSerializer.Serialize(writer, logs[i], LogEntry.DnsLogSerializerOptions.Default);
+                writer.WriteString("hostname", _hostname);
 
                 writer.Flush();
                 target.WriteByte((byte)'\n');
