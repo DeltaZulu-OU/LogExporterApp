@@ -1,6 +1,5 @@
 ﻿using System.Collections.Generic;
 using System.IO;
-using System.Net;
 using System.Text.Json;
 
 namespace LogExporter.Sinks
@@ -14,26 +13,57 @@ namespace LogExporter.Sinks
     /// </summary>
     public static class NdjsonSerializer
     {
-        private static readonly string _hostname = Dns.GetHostName();
-
         public static void WriteBatch(Stream target, IReadOnlyList<LogEntry> logs)
         {
-            using Utf8JsonWriter writer = new Utf8JsonWriter(target, new JsonWriterOptions
+            using var writer = CreateWriter(target);
+
+            for (var i = 0; i < logs.Count; i++)
+            {
+                JsonSerializer.Serialize(writer, logs[i], LogEntry.DnsLogSerializerOptions.Default);
+                CompleteRecord(writer, target);
+            }
+        }
+
+        public static void WriteBatchWithHostname(
+            Stream target,
+            IReadOnlyList<LogEntry> logs,
+            string hostname)
+        {
+            using var writer = CreateWriter(target);
+
+            for (var i = 0; i < logs.Count; i++)
+            {
+                var element = JsonSerializer.SerializeToElement(
+                    logs[i],
+                    LogEntry.DnsLogSerializerOptions.Default);
+
+                writer.WriteStartObject();
+
+                foreach (var property in element.EnumerateObject())
+                {
+                    property.WriteTo(writer);
+                }
+
+                writer.WriteString("hostname", hostname);
+                writer.WriteEndObject();
+
+                CompleteRecord(writer, target);
+            }
+        }
+
+        private static Utf8JsonWriter CreateWriter(Stream target) =>
+            new Utf8JsonWriter(target, new JsonWriterOptions
             {
                 Indented = false,
                 SkipValidation = false,
                 NewLine = "\n"
             });
 
-            for (int i = 0; i < logs.Count; i++)
-            {
-                JsonSerializer.Serialize(writer, logs[i], LogEntry.DnsLogSerializerOptions.Default);
-                writer.WriteString("hostname", _hostname);
-
-                writer.Flush();
-                target.WriteByte((byte)'\n');
-                writer.Reset();
-            }
+        private static void CompleteRecord(Utf8JsonWriter writer, Stream target)
+        {
+            writer.Flush();
+            target.WriteByte((byte)'\n');
+            writer.Reset();
         }
     }
 }

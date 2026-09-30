@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,6 +34,8 @@ namespace LogExporter.Sinks
 
         private readonly Uri _endpoint;
         private readonly HttpClient _httpClient;
+        private static readonly string Hostname = Dns.GetHostName();
+
         private readonly RecyclableMemoryStreamManager _memoryManager = new();
         private bool _disposed;
 
@@ -53,7 +56,7 @@ namespace LogExporter.Sinks
         /// </remarks>
         public HttpSink(string endpoint, Dictionary<string, string?>? headers = null)
         {
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) ||
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             {
                 throw new ArgumentException(
@@ -71,7 +74,9 @@ namespace LogExporter.Sinks
             foreach (var kv in headers)
             {
                 if (_httpClient.DefaultRequestHeaders.TryAddWithoutValidation(kv.Key, kv.Value))
+                {
                     continue;
+                }
 
                 _httpClient.Dispose();
                 throw new FormatException($"'{kv.Key}' is not a valid HTTP request header.");
@@ -85,7 +90,9 @@ namespace LogExporter.Sinks
         public void Dispose()
         {
             if (_disposed)
+            {
                 return;
+            }
 
             _httpClient.Dispose();
             _disposed = true;
@@ -102,19 +109,22 @@ namespace LogExporter.Sinks
             // late calls as no-ops avoids spurious ObjectDisposedExceptions during normal
             // teardown.
             if (_disposed || logs == null || logs.Count == 0 || token.IsCancellationRequested)
+            {
                 return;
+            }
+#pragma warning disable RCS1261 // Resource can be disposed asynchronously
+            using var ms = _memoryManager.GetStream("HttpExport-Batch");
+#pragma warning restore RCS1261 // Resource can be disposed asynchronously
 
-            using RecyclableMemoryStream ms = _memoryManager.GetStream("HttpExport-Batch");
-
-            // Use Stream overload explicitly to avoid ambiguity
-            NdjsonSerializer.WriteBatch(ms, logs);
+            // HTTP collectors need the responding cluster member in each event.
+            NdjsonSerializer.WriteBatchWithHostname(ms, logs, Hostname);
 
             ms.Position = 0;
 
-            using StreamContent content = new StreamContent(ms);
+            using var content = new StreamContent(ms);
             content.Headers.Add("Content-Type", "application/x-ndjson");
 
-            using HttpResponseMessage response = await _httpClient
+            using var response = await _httpClient
                 .PostAsync(_endpoint, content, token)
                 .ConfigureAwait(false);
 

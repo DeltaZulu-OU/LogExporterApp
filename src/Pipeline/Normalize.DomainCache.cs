@@ -31,12 +31,15 @@ namespace LogExporter.Pipeline
     public partial class Normalize
     {
         /// <summary>
-        /// Thread-safe cache for parsed domain information using the SIEVE eviction algorithm. 
+        /// <para>
+        /// Thread-safe cache for parsed domain information using the SIEVE eviction algorithm.
         /// SIEVE provides better scan resistance than LRU, making it ideal for DNS workloads
-        /// where one-time queries (typos, DGA domains) are common.  
-        /// 
-        /// Reference: "SIEVE is Simpler than LRU: an Efficient Turn-Key Eviction Algorithm for 
+        /// where one-time queries (typos, DGA domains) are common.
+        /// </para>
+        /// <para>
+        /// Reference: "SIEVE is Simpler than LRU: an Efficient Turn-Key Eviction Algorithm for
         /// Web Caches" (NSDI '24)
+        /// </para>
         /// </summary>
         internal sealed class DomainCache
         {
@@ -55,8 +58,8 @@ namespace LogExporter.Pipeline
             private static readonly Lazy<CachedHttpRuleProvider> _sharedRuleProvider =
                 new Lazy<CachedHttpRuleProvider>(static () =>
                 {
-                    LocalFileSystemCacheProvider cacheProvider = new LocalFileSystemCacheProvider();
-                    CachedHttpRuleProvider rp = new CachedHttpRuleProvider(cacheProvider, _pslHttpClient);
+                    var cacheProvider = new LocalFileSystemCacheProvider();
+                    var rp = new CachedHttpRuleProvider(cacheProvider, _pslHttpClient);
                     rp.BuildAsync().GetAwaiter().GetResult();
                     return rp;
                 }, isThreadSafe: true);
@@ -77,17 +80,19 @@ namespace LogExporter.Pipeline
             public DomainInfo GetOrAdd(string domainName)
             {
                 if (string.IsNullOrWhiteSpace(domainName))
+                {
                     return Empty;
+                }
 
                 // Fast path: try cache lookup with original name first (case-insensitive)
-                if (_cache.TryGetValue(domainName, out CacheNode? node))
+                if (_cache.TryGetValue(domainName, out var node))
                 {
                     node.Visited = true;
                     return node.Domain;
                 }
 
                 // NormalizeConfig only if needed, using string pool to reduce allocations
-                string normalizedName = GetPooledNormalizedName(domainName);
+                var normalizedName = GetPooledNormalizedName(domainName);
 
                 // Check cache again with normalized name (may differ from original)
                 if (!ReferenceEquals(normalizedName, domainName) &&
@@ -97,7 +102,7 @@ namespace LogExporter.Pipeline
                     return node.Domain;
                 }
 
-                DomainInfo domain = Parse(domainName);
+                var domain = Parse(domainName);
                 AddToCache(normalizedName, domain);
                 return domain;
             }
@@ -126,13 +131,17 @@ namespace LogExporter.Pipeline
             private string GetPooledNormalizedName(string name)
             {
                 if (!NeedsNormalization(name))
+                {
                     return name;
+                }
 
-                string normalized = name.ToLowerInvariant().TrimEnd('.');
+                var normalized = name.ToLowerInvariant().TrimEnd('.');
 
                 // Try to get from pool, or add if not present
-                if (_stringPool.TryGetValue(normalized, out string? pooled))
+                if (_stringPool.TryGetValue(normalized, out var pooled))
+                {
                     return pooled;
+                }
 
                 // Limit pool size to prevent unbounded growth
                 if (_stringPool.Count < StringPoolMaxSize)
@@ -149,12 +158,16 @@ namespace LogExporter.Pipeline
             private static bool NeedsNormalization(string name)
             {
                 if (name.Length > 0 && name[^1] == '.')
+                {
                     return true;
+                }
 
-                foreach (char c in name)
+                foreach (var c in name)
                 {
                     if (c >= 'A' && c <= 'Z')
+                    {
                         return true;
+                    }
                 }
 
                 return false;
@@ -162,9 +175,11 @@ namespace LogExporter.Pipeline
 
             private static DomainInfo Parse(string name)
             {
-                DomainParser? parser = _parser.Value;
+                var parser = _parser.Value;
                 if (parser == null)
+                {
                     return Empty;
+                }
 
                 try
                 {
@@ -201,12 +216,16 @@ namespace LogExporter.Pipeline
                 lock (_evictionLock)
                 {
                     if (_cache.ContainsKey(key))
+                    {
                         return;
+                    }
 
                     while (_cache.Count >= MaxSize)
+                    {
                         Evict();
+                    }
 
-                    CacheNode newNode = new CacheNode(key, domain);
+                    var newNode = new CacheNode(key, domain);
                     InsertAtHead(newNode);
                     _cache[key] = newNode;
                 }
@@ -217,8 +236,7 @@ namespace LogExporter.Pipeline
                 node.Next = _head;
                 node.Prev = null;
 
-                if (_head != null)
-                    _head.Prev = node;
+                _head?.Prev = node;
 
                 _head = node;
 
@@ -235,7 +253,7 @@ namespace LogExporter.Pipeline
                 {
                     if (!_hand.Visited)
                     {
-                        CacheNode victim = _hand;
+                        var victim = _hand;
                         _hand = _hand.Prev ?? _tail;
                         RemoveNode(victim);
                         _cache.TryRemove(victim.Key, out _);
@@ -250,17 +268,27 @@ namespace LogExporter.Pipeline
             private void RemoveNode(CacheNode node)
             {
                 if (node.Prev != null)
+                {
                     node.Prev.Next = node.Next;
+                }
                 else
+                {
                     _head = node.Next;
+                }
 
                 if (node.Next != null)
+                {
                     node.Next.Prev = node.Prev;
+                }
                 else
+                {
                     _tail = node.Prev;
+                }
 
                 if (_hand == node)
+                {
                     _hand = node.Prev ?? _tail;
+                }
             }
 
             private class CacheNode

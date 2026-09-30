@@ -25,21 +25,16 @@ namespace LogExporter.Pipeline
 {
     public partial class Tags : IPipelineProcessor
     {
-        private readonly string[] _tags; 
+        private readonly string[] _tags;
         public Tags(IEnumerable<string> tags)
         {
             _tags = tags.ToArray();
         }
 
-        public void Process(LogEntry logEntry)
-        {
-            logEntry.Meta["tags"] = _tags;
-        }
+        public void Process(LogEntry logEntry) => logEntry.Meta["tags"] = _tags;
 
-        public void Dispose()
-        {
+        public void Dispose() =>
             // If DomainCache ever needs disposal, do it here.
             GC.SuppressFinalize(this);
-        }
     }
 }
