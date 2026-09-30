@@ -6,11 +6,13 @@ on:
     paths:
       - '**.cs'
       - '**.csproj'
+      - '.github/workflows/codeql.yml'
   pull_request:
     branches: [master]
     paths:
       - '**.cs'
       - '**.csproj'
+      - '.github/workflows/codeql.yml'
   schedule:
     - cron: '0 8 * * 4'
 
@@ -41,8 +43,28 @@ jobs:
         with:
           languages: ${{ matrix.language }}
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Replace upstream DLL reference with project reference
+        shell: pwsh
+        run: |
+          $projectPath = 'upstream/DnsServer/DnsServerCore.ApplicationCommon/DnsServerCore.ApplicationCommon.csproj'
+          $content = Get-Content $projectPath -Raw
+          $pattern = '(?s)<Reference Include="TechnitiumLibrary\.Net">\s*<HintPath>\.\.\\\.\.\\TechnitiumLibrary\\bin\\TechnitiumLibrary\.Net\.dll</HintPath>\s*<Private>false</Private>\s*</Reference>'
+          $replacement = '<ProjectReference Include="..\..\TechnitiumLibrary\TechnitiumLibrary.Net\TechnitiumLibrary.Net.csproj" />'
+          $updatedContent = $content -replace $pattern, $replacement
+
+          if ($updatedContent -eq $content) {
+            throw "Expected TechnitiumLibrary.Net reference was not found in '$projectPath'."
+          }
+
+          Set-Content -Path $projectPath -Value $updatedContent -NoNewline
+
+      - name: Build application
+        run: dotnet build src/LogExporterApp.csproj --configuration Release --no-incremental
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
