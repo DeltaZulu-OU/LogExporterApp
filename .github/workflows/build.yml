@@ -2,9 +2,6 @@ name: Build
 
 on:
   push:
-    branches:
-      - main
-      - "fix/**"
   pull_request:
 
 permissions:
@@ -65,3 +62,8 @@ jobs:
         shell: pwsh
         run: |
           msbuild "src/LogExporterApp.slnx" /restore /p:Configuration=Release /p:Platform="Any CPU" /p:RestorePackagesConfig=true /m
+
+      - name: Validate sink isolation and drain semantics
+        shell: pwsh
+        run: |
+          dotnet run --project "tests/LogExporterApp.Validation/LogExporterApp.Validation.csproj" --configuration Release
