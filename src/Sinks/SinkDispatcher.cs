@@ -296,6 +296,8 @@ namespace LogExporter.Sinks
                     _cancellation.Cancel();
                 }
 
+                var deferCancellationDispose = false;
+
                 try
                 {
                     Completion.WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
@@ -305,12 +307,34 @@ namespace LogExporter.Sinks
                 }
                 catch (TimeoutException)
                 {
-                    // Forced shutdown is bounded. Dispose the sink below to release its I/O.
+                    // Forced shutdown is bounded. Dispose the sink below to release its I/O,
+                    // but keep the cancellation source alive until the worker actually exits.
+                    deferCancellationDispose = true;
                 }
                 finally
                 {
-                    _cancellation.Dispose();
-                    _sink.Dispose();
+                    if (deferCancellationDispose)
+                    {
+                        try
+                        {
+                            _sink.Dispose();
+                        }
+                        finally
+                        {
+                            _ = Completion.ContinueWith(
+                                static (_, state) =>
+                                    ((CancellationTokenSource)state!).Dispose(),
+                                _cancellation,
+                                CancellationToken.None,
+                                TaskContinuationOptions.ExecuteSynchronously,
+                                TaskScheduler.Default);
+                        }
+                    }
+                    else
+                    {
+                        _cancellation.Dispose();
+                        _sink.Dispose();
+                    }
                 }
             }
 
