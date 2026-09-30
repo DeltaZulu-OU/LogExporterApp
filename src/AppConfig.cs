@@ -178,6 +178,7 @@ namespace LogExporter
         public class TaggingProcess : FeatureBase
         {
             [Required(ErrorMessage = "tags are required when tagging is enabled.")]
+            [MinLength(1, ErrorMessage = "at least one tag is required when tagging is enabled.")]
             [JsonPropertyName("tags")]
             public List<string> Tags { get; set; } = new();
         }

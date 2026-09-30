@@ -163,8 +163,9 @@ namespace LogExporter
                     throw;
                 }
 
-                // A config update reuses this App instance. Stop the current generation
-                // only after the replacement configuration has been validated.
+                // A config update reuses this App instance. Stop the current generation only
+                // after the replacement configuration has been validated. Runtime sink creation
+                // failures remain sink-local and are handled by ConfigureSinks().
                 await StopPipelineAsync().ConfigureAwait(false);
 
                 try
@@ -395,6 +396,8 @@ namespace LogExporter
         /// Each sink is configured in isolation. A sink that cannot be created is reported with a
         /// concise, sink-specific message and skipped, so one broken target (bad path, invalid
         /// endpoint) does not disable every other sink or abort <see cref="InitializeAsync"/>.
+        /// Configuration validation is transactional, but runtime sink creation is intentionally
+        /// best-effort; environmental failures can therefore leave fewer, or no, active sinks.
         /// </remarks>
         private void ConfigureSinks(SinkConfig sinks)
         {
@@ -565,6 +568,11 @@ namespace LogExporter
 
         private void ReportDroppedIfDue()
         {
+            if (Volatile.Read(ref _droppedCount) == 0)
+            {
+                return;
+            }
+
             var nowTicks = DateTime.UtcNow.Ticks;
             var lastTicks = Volatile.Read(ref _lastDropTicks);
 
