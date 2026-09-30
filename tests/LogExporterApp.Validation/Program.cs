@@ -37,6 +37,8 @@ internal static class Program
         PipelineProcessorsRunInRegistrationOrder();
         DuplicatePipelineProcessorTypesAreRejected();
         RemoveAndReAddMovesProcessorToEnd();
+        PipelineErrorCallbackCannotBreakIsolation();
+        EnabledTaggingRequiresAtLeastOneTag();
 
         await DomainCacheDoesNotBlockOrCacheBeforeParserIsReadyAsync();
 
@@ -394,6 +396,39 @@ internal static class Program
 
         Assert(order.SequenceEqual(["second", "first"]),
             "Removed and re-added processor did not move to the end of execution order.");
+    }
+
+    private static void PipelineErrorCallbackCannotBreakIsolation()
+    {
+        using var dispatcher = new PipelineDispatcher();
+        dispatcher.Add(new ThrowingTestProcessor());
+
+        dispatcher.Run(
+            CreateLogEntry("callback-isolation.example"),
+            _ => throw new InvalidOperationException("Synthetic callback failure."));
+    }
+
+    private static void EnabledTaggingRequiresAtLeastOneTag()
+    {
+        foreach (var config in new[]
+        {
+            """{"sinks":{},"pipeline":{"tagging":{"enabled":true}}}""",
+            """{"sinks":{},"pipeline":{"tagging":{"enabled":true,"tags":[]}}}"""
+        })
+        {
+            var rejected = false;
+
+            try
+            {
+                AppConfig.Deserialize(config);
+            }
+            catch (System.ComponentModel.DataAnnotations.ValidationException)
+            {
+                rejected = true;
+            }
+
+            Assert(rejected, "Enabled tagging without tags was unexpectedly accepted.");
+        }
     }
 
     private static LogEntry CreateLogEntry(string name)
@@ -767,6 +802,16 @@ internal static class Program
         }
 
         public void Process(LogEntry logEntry) => _order.Add("second");
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class ThrowingTestProcessor : IPipelineProcessor
+    {
+        public void Process(LogEntry logEntry) =>
+            throw new InvalidOperationException("Synthetic processor failure.");
 
         public void Dispose()
         {

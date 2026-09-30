@@ -160,7 +160,14 @@ namespace LogExporter.Pipeline
                     }
                     catch (Exception ex)
                     {
-                        onError?.Invoke(ex);
+                        try
+                        {
+                            onError?.Invoke(ex);
+                        }
+                        catch
+                        {
+                            // Error reporting must not break processor isolation.
+                        }
                     }
                 }
             }
