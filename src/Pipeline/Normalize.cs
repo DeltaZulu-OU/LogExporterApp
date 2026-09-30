@@ -17,8 +17,6 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-using System;
-
 namespace LogExporter.Pipeline
 {
     public partial class Normalize : IPipelineProcessor
@@ -32,13 +30,13 @@ namespace LogExporter.Pipeline
                 return;
             }
 
-            // store under a well-known key you can standardize keys if you like
+            // Store normalized domain metadata under the established enrichment key.
             logEntry.Meta["domainInfo"] = _domainCache.GetOrAdd(logEntry.Question.QuestionName);
         }
 
-        public void Dispose() =>
-            // If DomainCache ever needs disposal, do it here.
-            GC.SuppressFinalize(this);
+        public void Dispose()
+        {
+        }
     }
 
 }

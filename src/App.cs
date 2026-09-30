@@ -56,7 +56,6 @@ namespace LogExporter
         private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
         private IngestionState? _ingestionState;
         private Task? _backgroundTask;
-        private AppConfig? _config;
         private int _disposed;
         private IDnsServer? _dnsServer;
 
@@ -170,9 +169,8 @@ namespace LogExporter
 
                 try
                 {
-                    _config = nextConfig;
-                    ConfigurePipeline();
-                    ConfigureSinks();
+                    ConfigurePipeline(nextConfig.Pipeline);
+                    ConfigureSinks(nextConfig.Sinks);
                 }
                 catch (Exception ex)
                 {
@@ -186,7 +184,7 @@ namespace LogExporter
                 }
 
                 var transformChannel = Channel.CreateBounded<LogEntry>(
-                    new BoundedChannelOptions(_config!.Sinks.MaxQueueSize)
+                    new BoundedChannelOptions(nextConfig.Sinks.MaxQueueSize)
                     {
                         SingleReader = true,
                         SingleWriter = false,
@@ -195,7 +193,7 @@ namespace LogExporter
                     _ => IncrementDropCount());
 
                 var enrichedChannel = Channel.CreateBounded<LogEntry>(
-                    new BoundedChannelOptions(_config.Sinks.MaxQueueSize)
+                    new BoundedChannelOptions(nextConfig.Sinks.MaxQueueSize)
                     {
                         SingleReader = true,
                         SingleWriter = true,
@@ -214,7 +212,7 @@ namespace LogExporter
 
                 Volatile.Write(
                     ref _ingestionState,
-                    new IngestionState(transformChannel, _config.Sinks.EnableEdnsLogging));
+                    new IngestionState(transformChannel, nextConfig.Sinks.EnableEdnsLogging));
             }
             finally
             {
@@ -398,10 +396,8 @@ namespace LogExporter
         /// concise, sink-specific message and skipped, so one broken target (bad path, invalid
         /// endpoint) does not disable every other sink or abort <see cref="InitializeAsync"/>.
         /// </remarks>
-        private void ConfigureSinks()
+        private void ConfigureSinks(SinkConfig sinks)
         {
-            var sinks = _config!.Sinks;
-
             ConfigureConsoleSink(sinks.ConsoleSinkConfig, sinks.MaxQueueSize);
             ConfigureFileSink(sinks.FileSinkConfig, sinks.MaxQueueSize);
             ConfigureHttpSink(sinks.HttpSinkConfig, sinks.MaxQueueSize);
@@ -440,16 +436,11 @@ namespace LogExporter
 
             try
             {
-                AppConfig.ValidateObject(config);
                 _sinkDispatcher.Add(
                     new FileSink(config.Path!),
                     queueCapacity,
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
-            }
-            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
-            {
-                LogSinkDisabled("File", ex.Message);
             }
             catch (UnauthorizedAccessException)
             {
@@ -483,16 +474,11 @@ namespace LogExporter
 
             try
             {
-                AppConfig.ValidateObject(config);
                 _sinkDispatcher.Add(
                     new HttpSink(config.Endpoint!, config.Headers),
                     queueCapacity,
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
-            }
-            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
-            {
-                LogSinkDisabled("HTTP", ex.Message);
             }
             catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
@@ -515,7 +501,6 @@ namespace LogExporter
 
             try
             {
-                AppConfig.ValidateObject(config);
                 // Host name resolution is deferred until the DNS server is serving; see SyslogSink.
                 _sinkDispatcher.Add(
                     new SyslogSink(config.Address!,
@@ -526,10 +511,6 @@ namespace LogExporter
                     queueCapacity,
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
-            }
-            catch (System.ComponentModel.DataAnnotations.ValidationException ex)
-            {
-                LogSinkDisabled("Syslog", ex.Message);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
             {
@@ -564,18 +545,18 @@ namespace LogExporter
         /// </remarks>
         private void LogUnexpectedSinkFailure(string sinkName, Exception ex) => _dnsServer?.WriteLog($"{sinkName} sink is disabled due to an unexpected error.", ex);
 
-        private void ConfigurePipeline()
+        private void ConfigurePipeline(PipelineConfig pipeline)
         {
             // Remove any existing processor types before applying the new configuration.
             _enrichmentDispatcher.Remove(typeof(Normalize));
             _enrichmentDispatcher.Remove(typeof(Tags));
-            if (_config!.Pipeline.NormalizeProcessConfig?.Enabled is true)
+            if (pipeline.NormalizeProcessConfig?.Enabled is true)
             {
                 _enrichmentDispatcher.Add(new Normalize());
             }
-            if (_config!.Pipeline.TaggingProcessConfig?.Enabled is true)
+            if (pipeline.TaggingProcessConfig?.Enabled is true)
             {
-                _enrichmentDispatcher.Add(new Tags(_config.Pipeline.TaggingProcessConfig.Tags));
+                _enrichmentDispatcher.Add(new Tags(pipeline.TaggingProcessConfig.Tags));
             }
         }
 

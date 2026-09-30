@@ -105,7 +105,7 @@ namespace LogExporter
 
         }
 
-        private EDNSLog[] PopulateEDNSLogs(DnsDatagram response)
+        private static EDNSLog[] PopulateEDNSLogs(DnsDatagram response)
         {
             List<EDNSLog>? edns = null;
 
