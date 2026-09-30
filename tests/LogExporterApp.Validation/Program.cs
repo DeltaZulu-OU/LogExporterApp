@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using LogExporter.Sinks;
+using LogExporter.Pipeline;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
@@ -25,6 +26,10 @@ internal static class Program
         await InvalidReloadPreservesActiveGenerationAsync();
         await DisposeDuringActiveIngestionIsSafeAsync();
         await InitializeAfterDisposeIsRejectedAsync();
+
+        PipelineProcessorsRunInRegistrationOrder();
+        DuplicatePipelineProcessorTypesAreRejected();
+        RemoveAndReAddMovesProcessorToEnd();
 
         Console.WriteLine("LogExporter lifecycle validation passed.");
     }
@@ -262,6 +267,103 @@ internal static class Program
         Assert(rejected, "InitializeAsync succeeded after App disposal.");
     }
 
+    private static void PipelineProcessorsRunInRegistrationOrder()
+    {
+        using var dispatcher = new PipelineDispatcher();
+        var order = new List<string>();
+
+        dispatcher.Add(new FirstTestProcessor(order));
+        dispatcher.Add(new SecondTestProcessor(order));
+
+        dispatcher.Run(CreateLogEntry("order.example"));
+
+        Assert(order.SequenceEqual(["first", "second"]),
+            "Pipeline processors did not run in registration order.");
+    }
+
+    private static void DuplicatePipelineProcessorTypesAreRejected()
+    {
+        using var dispatcher = new PipelineDispatcher();
+        var order = new List<string>();
+
+        dispatcher.Add(new FirstTestProcessor(order));
+
+        var rejected = false;
+        var duplicate = new FirstTestProcessor(order);
+
+        try
+        {
+            dispatcher.Add(duplicate);
+        }
+        catch (InvalidOperationException)
+        {
+            rejected = true;
+            duplicate.Dispose();
+        }
+
+        Assert(rejected, "Duplicate pipeline processor type was not rejected.");
+    }
+
+    private static void RemoveAndReAddMovesProcessorToEnd()
+    {
+        using var dispatcher = new PipelineDispatcher();
+        var order = new List<string>();
+
+        dispatcher.Add(new FirstTestProcessor(order));
+        dispatcher.Add(new SecondTestProcessor(order));
+
+        dispatcher.Remove(typeof(FirstTestProcessor));
+        dispatcher.Add(new FirstTestProcessor(order));
+
+        dispatcher.Run(CreateLogEntry("reorder.example"));
+
+        Assert(order.SequenceEqual(["second", "first"]),
+            "Removed and re-added processor did not move to the end of execution order.");
+    }
+
+    private static LogEntry CreateLogEntry(string name)
+    {
+        var question = new DnsQuestionRecord(
+            name,
+            DnsResourceRecordType.A,
+            DnsClass.IN);
+
+        var request = new DnsDatagram(
+            1,
+            false,
+            DnsOpcode.StandardQuery,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            DnsResponseCode.NoError,
+            [question]);
+
+        request.SetMetadata(new NameServerAddress(IPAddress.Loopback));
+
+        var response = new DnsDatagram(
+            1,
+            true,
+            DnsOpcode.StandardQuery,
+            false,
+            false,
+            true,
+            true,
+            false,
+            false,
+            DnsResponseCode.NoError,
+            [question]);
+
+        return new LogEntry(
+            DateTime.UtcNow,
+            new IPEndPoint(IPAddress.Loopback, 53000),
+            DnsTransportProtocol.Udp,
+            request,
+            response);
+    }
+
     private static async Task InsertAsync(App app, string name)
     {
         var question = new DnsQuestionRecord(
@@ -397,6 +499,38 @@ internal static class Program
 
             throw new NotSupportedException(
                 $"Unexpected IDnsServer member used by lifecycle validation: {targetMethod.Name}");
+        }
+    }
+
+    private sealed class FirstTestProcessor : IPipelineProcessor
+    {
+        private readonly List<string> _order;
+
+        public FirstTestProcessor(List<string> order)
+        {
+            _order = order;
+        }
+
+        public void Process(LogEntry logEntry) => _order.Add("first");
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class SecondTestProcessor : IPipelineProcessor
+    {
+        private readonly List<string> _order;
+
+        public SecondTestProcessor(List<string> order)
+        {
+            _order = order;
+        }
+
+        public void Process(LogEntry logEntry) => _order.Add("second");
+
+        public void Dispose()
+        {
         }
     }
 
