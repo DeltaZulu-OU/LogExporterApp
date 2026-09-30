@@ -18,7 +18,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
 
 namespace LogExporter.Pipeline
 {
@@ -35,8 +36,9 @@ namespace LogExporter.Pipeline
     {
         #region variables
 
-        private readonly ConcurrentDictionary<Type, IPipelineProcessor> _processors =
-            new ConcurrentDictionary<Type, IPipelineProcessor>();
+        private readonly Lock _sync = new Lock();
+        private readonly Dictionary<Type, IPipelineProcessor> _processors =
+            new Dictionary<Type, IPipelineProcessor>();
 
         private bool _disposed;
 
@@ -46,27 +48,30 @@ namespace LogExporter.Pipeline
 
         public void Dispose()
         {
-            if (_disposed)
+            lock (_sync)
             {
-                return;
-            }
-
-            _disposed = true;
-
-            foreach (var enricher in _processors.Values)
-            {
-                try
+                if (_disposed)
                 {
-                    enricher.Dispose();
+                    return;
                 }
-                catch
-                {
-                    // At this point we cannot rely on any logging infrastructure.
-                    // Best-effort only: swallow to avoid secondary failures.
-                }
-            }
 
-            _processors.Clear();
+                _disposed = true;
+
+                foreach (var enricher in _processors.Values)
+                {
+                    try
+                    {
+                        enricher.Dispose();
+                    }
+                    catch
+                    {
+                        // At this point we cannot rely on any logging infrastructure.
+                        // Best-effort only: swallow to avoid secondary failures.
+                    }
+                }
+
+                _processors.Clear();
+            }
         }
 
         #endregion
@@ -75,15 +80,14 @@ namespace LogExporter.Pipeline
 
         public void Add(IPipelineProcessor processor)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentNullException.ThrowIfNull(processor);
 
-            _processors.AddOrUpdate(
-                processor.GetType(),
-                processor,
-                (_, existing) =>
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                if (_processors.Remove(processor.GetType(), out var existing))
                 {
-                    // Replace existing instance defensively.
                     try
                     {
                         existing.Dispose();
@@ -92,37 +96,40 @@ namespace LogExporter.Pipeline
                     {
                         // Ignore disposal failure; new instance still becomes active.
                     }
+                }
 
-                    return processor;
-                });
+                _processors.Add(processor.GetType(), processor);
+            }
         }
 
         public void Remove(Type type)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentNullException.ThrowIfNull(type);
 
-            if (_processors.TryRemove(type, out var existing))
+            lock (_sync)
             {
-                try
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                if (_processors.Remove(type, out var existing))
                 {
-                    existing.Dispose();
-                }
-                catch
-                {
-                    // Isolation: disposal of one processor must not affect others.
+                    try
+                    {
+                        existing.Dispose();
+                    }
+                    catch
+                    {
+                        // Isolation: disposal of one processor must not affect others.
+                    }
                 }
             }
         }
 
         public bool Any()
         {
-            if (_disposed)
+            lock (_sync)
             {
-                return false;
+                return !_disposed && _processors.Count > 0;
             }
-
-            return !_processors.IsEmpty;
         }
 
         /// <summary>
@@ -131,20 +138,28 @@ namespace LogExporter.Pipeline
         /// </summary>
         public void Run(LogEntry logEntry, Action<Exception>? onError = null)
         {
-            if (_disposed || logEntry == null || _processors.IsEmpty)
+            if (logEntry == null)
             {
                 return;
             }
 
-            foreach (var processor in _processors.Values)
+            lock (_sync)
             {
-                try
+                if (_disposed || _processors.Count == 0)
                 {
-                    processor.Process(logEntry);
+                    return;
                 }
-                catch (Exception ex)
+
+                foreach (var processor in _processors.Values)
                 {
-                    onError?.Invoke(ex);
+                    try
+                    {
+                        processor.Process(logEntry);
+                    }
+                    catch (Exception ex)
+                    {
+                        onError?.Invoke(ex);
+                    }
                 }
             }
         }
