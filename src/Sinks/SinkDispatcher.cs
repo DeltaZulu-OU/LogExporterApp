@@ -61,23 +61,9 @@ namespace LogExporter.Sinks
                 Volatile.Write(ref _workerSnapshot, Array.Empty<SinkWorker>());
             }
 
-            Exception? failure = null;
-
             foreach (var worker in workers)
             {
-                try
-                {
-                    worker.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    failure ??= ex;
-                }
-            }
-
-            if (failure is not null)
-            {
-                throw failure;
+                worker.Dispose();
             }
         }
 
@@ -300,10 +286,14 @@ namespace LogExporter.Sinks
 
                 try
                 {
-                    Completion.WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+                    Completion
+                        .WaitAsync(TimeSpan.FromSeconds(1), CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
                 }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                 {
+                    // Expected after requesting worker cancellation during disposal.
                 }
                 catch (TimeoutException)
                 {
@@ -317,7 +307,7 @@ namespace LogExporter.Sinks
                     {
                         try
                         {
-                            _sink.Dispose();
+                            DisposeSink();
                         }
                         finally
                         {
@@ -333,8 +323,20 @@ namespace LogExporter.Sinks
                     else
                     {
                         _cancellation.Dispose();
-                        _sink.Dispose();
+                        DisposeSink();
                     }
+                }
+            }
+
+            private void DisposeSink()
+            {
+                try
+                {
+                    _sink.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    ReportError(ex);
                 }
             }
 
@@ -386,6 +388,7 @@ namespace LogExporter.Sinks
                 }
                 catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                 {
+                    // Expected during worker shutdown; do not fault Completion.
                 }
                 catch (Exception ex)
                 {
