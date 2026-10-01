@@ -79,8 +79,8 @@ namespace LogExporter.Sinks
         ///     Initializes a new instance of the cancellation token source used to signal disposal and cancel ongoing operations.
         /// </summary>
         /// <remarks>
-        /// Deliberately never disposed. A resolution or retry delay may still observe its token after
-        /// <see cref="Dispose"/> returns, and a source without a timer holds no unmanaged resources.
+        /// Cancellation is requested by <see cref="Dispose"/>. Disposal is deferred until the
+        /// transport task completes because resolution or retry delays may still observe the token.
         /// </remarks>
         private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
         private readonly Task<ISyslogTransport?> _transportTask;
@@ -176,13 +176,21 @@ namespace LogExporter.Sinks
             _disposeCts.Cancel();
 
             _transportTask.ContinueWith(
-                static t =>
+                static (t, state) =>
                 {
-                    if (t.IsCompletedSuccessfully)
+                    try
                     {
-                        t.Result?.Dispose();
+                        if (t.IsCompletedSuccessfully)
+                        {
+                            t.Result?.Dispose();
+                        }
+                    }
+                    finally
+                    {
+                        ((CancellationTokenSource)state!).Dispose();
                     }
                 },
+                _disposeCts,
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
