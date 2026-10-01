@@ -18,15 +18,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-using Serilog;
 using Serilog.Events;
 using Serilog.Parsing;
 using Serilog.Sinks.Syslog;
-using Serilog.Sinks.PeriodicBatching;
 using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.IO;
+using System.Security.Authentication;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,8 +47,8 @@ namespace LogExporter.Sinks
     /// <para>
     /// The logger is therefore built in the background once the <c>serverReady</c> task
     /// completes. <see cref="App"/> completes it on the first query log, which the DNS server
-    /// can only deliver once it is serving. Name resolution is then retried a few times, see
-    /// <see cref="ResolveWithRetryAsync"/>.
+    /// can only deliver once it is serving. Name resolution is then retried in the background
+    /// until it succeeds or the sink is disposed, see <see cref="ResolveWithRetryAsync"/>.
     /// </para>
     /// <para>
     /// The address may be an IP address or an FQDN. For UDP, an FQDN is resolved once per
@@ -68,47 +68,25 @@ namespace LogExporter.Sinks
         private readonly Facility _facility = Facility.Local6;
 
         /// <summary>
-        /// Number of resolution attempts before the sink gives up.
-        /// </summary>
-        /// <remarks>
-        /// The first query log proves that the listeners are up, but not that every zone is
-        /// loaded or that upstream recursion works yet. Another DNS app may also trigger a query
-        /// log while apps are still loading. A short, bounded retry covers these windows without
-        /// turning a genuinely wrong address into an endless loop of log messages.
-        /// </remarks>
-        private const int MaxResolveAttempts = 5;
-
-        /// <summary>
-        /// Delay before the first retry. It doubles on every further attempt
-        /// (2, 4, 8 and 16 seconds), so the sink gives up about 30 seconds after the server is ready.
+        /// Delay before the first retry. It doubles after each failure and is capped so a
+        /// long-lived resolver outage does not create arbitrarily long recovery latency.
         /// </summary>
         private static readonly TimeSpan InitialResolveRetryDelay = TimeSpan.FromSeconds(2);
 
         /// <summary>
-        /// Longest time a single export waits for the logger to be created.
+        /// Maximum retry delay before jitter is applied.
         /// </summary>
-        /// <remarks>
-        /// Each sink has its own worker, so waiting here affects only syslog. One second covers a
-        /// normal lookup for the first batch without holding the syslog worker through the whole
-        /// retry window. While retries are still running, later syslog batches are dropped.
-        /// </remarks>
-        private static readonly TimeSpan LoggerWaitTimeout = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan MaxResolveRetryDelay = TimeSpan.FromSeconds(30);
 
-        // SinkWorker is the primary buffering layer. Serilog requires a batching wrapper for
-        // remote syslog transports, so keep that secondary queue shallow and eager. Its completion
-        // boundary is not equivalent to confirmed network delivery.
-        private static PeriodicBatchingSinkOptions CreateBatchOptions() => new()
-        {
-            BatchSizeLimit = 1000,
-            Period = TimeSpan.FromMilliseconds(25),
-            QueueLimit = 1000,
-            EagerlyEmitFirstEvent = true
-        };
+        private const double RetryJitterMin = 0.8;
+        private const double RetryJitterRange = 0.4;
 
         private readonly string _address;
         private readonly int _port;
         private readonly string _protocol;
         private readonly Action<string>? _log;
+        private readonly Func<string, ISyslogTransport> _transportFactory;
+        private readonly Func<int, TimeSpan> _retryDelayFactory;
 
         /// <summary>
         ///     Initializes a new instance of the cancellation token source used to signal disposal and cancel ongoing operations.
@@ -118,7 +96,7 @@ namespace LogExporter.Sinks
         /// <see cref="Dispose"/> returns, and a source without a timer holds no unmanaged resources.
         /// </remarks>
         private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
-        private readonly Task<Serilog.Core.Logger?> _loggerTask;
+        private readonly Task<ISyslogTransport?> _transportTask;
 
         private bool _disposed;
 
@@ -147,6 +125,18 @@ namespace LogExporter.Sinks
         /// <param name="log">Receives failures that occur after construction, when no caller is left
         /// to catch an exception.</param>
         public SyslogSink(string address, int? port, string? protocol, Task serverReady, Action<string>? log = null)
+            : this(address, port, protocol, serverReady, log, null, null)
+        {
+        }
+
+        internal SyslogSink(
+            string address,
+            int? port,
+            string? protocol,
+            Task serverReady,
+            Action<string>? log,
+            Func<string, ISyslogTransport>? transportFactory,
+            Func<int, TimeSpan>? retryDelayFactory)
         {
             _address = address;
             _port = port ?? DEFAULT_PORT;
@@ -168,7 +158,13 @@ namespace LogExporter.Sinks
                 throw new ArgumentException($"an address is required for protocol {_protocol.ToUpperInvariant()}.");
             }
 
-            _loggerTask = CreateLoggerWhenReadyAsync(serverReady, _disposeCts.Token);
+            _transportFactory = transportFactory
+                ?? (host => SyslogTransport.Create(host, _port, _protocol, _facility, _appName));
+
+            _retryDelayFactory = retryDelayFactory
+                ?? (failureCount => GetRetryDelay(failureCount, Random.Shared.NextDouble()));
+
+            _transportTask = CreateTransportWhenReadyAsync(serverReady, _disposeCts.Token);
         }
 
         #endregion
@@ -193,7 +189,7 @@ namespace LogExporter.Sinks
             _disposed = true;
             _disposeCts.Cancel();
 
-            _loggerTask.ContinueWith(
+            _transportTask.ContinueWith(
                 static t =>
                 {
                     if (t.IsCompletedSuccessfully)
@@ -212,45 +208,116 @@ namespace LogExporter.Sinks
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
-            // logger.Write() only hands the event to Serilog. Remote UDP/TCP/TLS delivery is
-            // performed by Serilog's internal batching transport, so transport failures may be
-            // reported through Serilog SelfLog rather than thrown from this method. SinkWorker
-            // isolation still prevents this sink from blocking the other configured sinks.
-
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
             {
                 return;
             }
 
-            Serilog.Core.Logger? logger;
-            try
-            {
-                logger = await _loggerTask.WaitAsync(LoggerWaitTimeout, token).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                return; // Still resolving or retrying; this batch is dropped for syslog only.
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            var transport = await _transportTask.WaitAsync(token).ConfigureAwait(false);
+            if (transport is null)
             {
                 return;
             }
 
-            if (logger is null)
-            {
-                return; // Creation failed and was reported once; the sink stays inactive.
-            }
+            var retryState = new TransportRetryState();
 
-            foreach (var log in logs)
+            for (var i = 0; i < logs.Count; i++)
             {
-                if (token.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                logger.Write(Convert(log));
+                await SendWithRetryAsync(
+                        transport,
+                        Convert(logs[i]),
+                        retryState,
+                        token)
+                    .ConfigureAwait(false);
             }
         }
+
+        private async Task SendWithRetryAsync(
+            ISyslogTransport transport,
+            LogEvent logEvent,
+            TransportRetryState retryState,
+            CancellationToken token)
+        {
+            while (true)
+            {
+                try
+                {
+                    await transport.SendAsync(logEvent, token).ConfigureAwait(false);
+                    ReportTransportRecovery(retryState);
+                    return;
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.MessageSize)
+                {
+                    _log?.Invoke(
+                        "Syslog dropped one entry because the formatted message exceeds the local transport's maximum message size.");
+                    return;
+                }
+                catch (Exception ex) when (IsRetryableTransportFailure(ex, token))
+                {
+                    await DelayBeforeTransportRetryAsync(
+                            ex,
+                            retryState,
+                            token)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+
+        private async Task DelayBeforeTransportRetryAsync(
+            Exception ex,
+            TransportRetryState retryState,
+            CancellationToken token)
+        {
+            retryState.FailureCount++;
+
+            if (!retryState.Degraded)
+            {
+                retryState.Degraded = true;
+                _log?.Invoke(
+                    $"Syslog local transport unavailable ({GetTransportErrorName(ex)}); " +
+                    "buffering logs and retrying.");
+            }
+
+            await Task.Delay(
+                    _retryDelayFactory(retryState.FailureCount),
+                    token)
+                .ConfigureAwait(false);
+        }
+
+        private void ReportTransportRecovery(TransportRetryState retryState)
+        {
+            if (!retryState.Degraded)
+            {
+                return;
+            }
+
+            retryState.Degraded = false;
+            retryState.FailureCount = 0;
+            _log?.Invoke(
+                "Syslog transport recovered; buffered logs are being delivered.");
+        }
+
+        private sealed class TransportRetryState
+        {
+            public bool Degraded { get; set; }
+            public int FailureCount { get; set; }
+        }
+
+        internal static bool IsRetryableTransportFailure(Exception ex, CancellationToken token) =>
+            ex is SocketException
+            || ex is IOException
+            || ex is AuthenticationException
+            || ex is TimeoutException
+            || (ex is OperationCanceledException && !token.IsCancellationRequested);
+
+        private static string GetTransportErrorName(Exception ex) =>
+            ex is SocketException socketException
+                ? socketException.SocketErrorCode.ToString()
+                : ex.GetType().Name;
 
         #endregion
 
@@ -265,9 +332,9 @@ namespace LogExporter.Sinks
         /// literal instead. TCP and TLS resolve when they connect, and TLS needs the host name
         /// for certificate validation, so both keep the configured address.
         /// </remarks>
-        /// <returns>The logger, or <see langword="null"/> when the sink was disposed or cannot be
-        /// created. Failures are reported through the log callback.</returns>
-        private async Task<Serilog.Core.Logger?> CreateLoggerWhenReadyAsync(Task serverReady, CancellationToken token)
+        /// <returns>The transport, or <see langword="null"/> when the sink was disposed or cannot
+        /// be created. Failures are reported through the log callback.</returns>
+        private async Task<ISyslogTransport?> CreateTransportWhenReadyAsync(Task serverReady, CancellationToken token)
         {
             try
             {
@@ -279,17 +346,10 @@ namespace LogExporter.Sinks
                     host = (await ResolveWithRetryAsync(_address, token).ConfigureAwait(false)).ToString();
                 }
 
-                return CreateLogger(host);
+                return _transportFactory(host);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                return null;
-            }
-            catch (SocketException ex)
-            {
-                _log?.Invoke(
-                    $"Syslog sink is disabled: cannot resolve '{_address}' after {MaxResolveAttempts} attempts " +
-                    $"({ex.SocketErrorCode}). Correct the address or its DNS record and save the configuration to try again.");
                 return null;
             }
             catch (Exception ex)
@@ -300,38 +360,76 @@ namespace LogExporter.Sinks
         }
 
         /// <summary>
-        /// Resolves <paramref name="host"/>, retrying with exponential backoff on socket errors.
+        /// Resolves <paramref name="host"/>, retrying with capped exponential backoff and jitter
+        /// until resolution succeeds or the sink is disposed.
         /// </summary>
         /// <remarks>
-        /// Every <see cref="SocketException"/> is retried, including <c>HostNotFound</c>: while
-        /// zones are still loading, a locally hosted name can briefly return NXDOMAIN. The first
-        /// failure is logged so an administrator can see why syslog output is delayed; the final
-        /// failure is rethrown to the caller, which disables the sink.
+        /// Every <see cref="SocketException"/> is treated as transient. This intentionally avoids
+        /// encoding a startup-readiness deadline: the host resolver may itself depend on the DNS
+        /// server that is still finishing startup. The degraded state is logged once, and recovery
+        /// is logged once when resolution eventually succeeds.
         /// </remarks>
-        /// <exception cref="SocketException">All <see cref="MaxResolveAttempts"/> attempts failed.</exception>
         private async Task<IPAddress> ResolveWithRetryAsync(string host, CancellationToken token)
         {
-            var delay = InitialResolveRetryDelay;
+            var failureCount = 0;
+            var degraded = false;
 
-            for (var attempt = 1; ; attempt++)
+            while (true)
             {
                 try
                 {
-                    return await ResolveAsync(host, token).ConfigureAwait(false);
-                }
-                catch (SocketException ex) when (attempt < MaxResolveAttempts)
-                {
-                    if (attempt == 1)
+                    var address = await ResolveAsync(host, token).ConfigureAwait(false);
+
+                    if (degraded)
                     {
-                        _log?.Invoke(
-                            $"Syslog sink cannot resolve '{host}' yet ({ex.SocketErrorCode}); " +
-                            $"retrying up to {MaxResolveAttempts - 1} more times.");
+                        _log?.Invoke($"Syslog sink resolved '{host}'; export resumed.");
                     }
 
+                    return address;
+                }
+                catch (SocketException ex)
+                {
+                    failureCount++;
+
+                    if (!degraded)
+                    {
+                        degraded = true;
+                        _log?.Invoke(
+                            $"Syslog sink cannot resolve '{host}' yet ({ex.SocketErrorCode}); " +
+                            "retrying in the background.");
+                    }
+
+                    var delay = GetRetryDelay(
+                        failureCount,
+                        Random.Shared.NextDouble());
+
                     await Task.Delay(delay, token).ConfigureAwait(false);
-                    delay *= 2;
                 }
             }
+        }
+
+        internal static TimeSpan GetRetryDelay(int failureCount, double jitterSample)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(failureCount, 1);
+            ArgumentOutOfRangeException.ThrowIfLessThan(jitterSample, 0);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(jitterSample, 1);
+
+            var baseSeconds = failureCount switch
+            {
+                1 => InitialResolveRetryDelay.TotalSeconds,
+                2 => InitialResolveRetryDelay.TotalSeconds * 2,
+                3 => InitialResolveRetryDelay.TotalSeconds * 4,
+                4 => InitialResolveRetryDelay.TotalSeconds * 8,
+                _ => MaxResolveRetryDelay.TotalSeconds
+            };
+
+            baseSeconds = Math.Min(baseSeconds, MaxResolveRetryDelay.TotalSeconds);
+
+            var jitteredSeconds =
+                baseSeconds * (RetryJitterMin + RetryJitterRange * jitterSample);
+
+            return TimeSpan.FromSeconds(
+                Math.Min(jitteredSeconds, MaxResolveRetryDelay.TotalSeconds));
         }
 
         /// <summary>
@@ -357,40 +455,6 @@ namespace LogExporter.Sinks
             }
 
             throw new SocketException((int)SocketError.NoData);
-        }
-
-        private Serilog.Core.Logger CreateLogger(string host)
-        {
-            var conf = new LoggerConfiguration();
-
-            conf = _protocol switch
-            {
-                "tls" or "tcp" => conf.WriteTo.TcpSyslog(
-                            host,
-                            _port,
-                            _appName,
-                            FramingType.OCTET_COUNTING,
-                            SyslogFormat.RFC5424,
-                            _facility,
-                            useTls: _protocol == "tls",
-                            batchConfig: CreateBatchOptions()),
-
-                "udp" => conf.WriteTo.UdpSyslog(
-                            host,
-                            _port,
-                            _appName,
-                            SyslogFormat.RFC5424,
-                            _facility,
-                            batchConfig: CreateBatchOptions()),
-
-                "local" => conf.WriteTo.LocalSyslog(
-                            _appName,
-                            _facility),
-
-                _ => throw new NotSupportedException("SyslogSink protocol is not supported: " + _protocol),
-            };
-
-            return conf.Enrich.FromLogContext().CreateLogger();
         }
 
         private static LogEvent Convert(LogEntry log)
