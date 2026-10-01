@@ -1,6 +1,6 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+using LogExporter;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class AppLifecycleTests
@@ -36,8 +36,8 @@ public sealed class AppLifecycleTests
             var oldNames = TestFixtures.ReadQuestionNames(oldPath);
             var newNames = TestFixtures.ReadQuestionNames(newPath);
 
-            Assert.AreEqual(64, oldNames.Count);
-            Assert.AreEqual(64, newNames.Count);
+            Assert.HasCount(64, oldNames);
+            Assert.HasCount(64, newNames);
             Assert.IsTrue(oldNames.All(name => name.StartsWith("old-", StringComparison.Ordinal)));
             Assert.IsTrue(newNames.All(name => name.StartsWith("new-", StringComparison.Ordinal)));
         }
@@ -173,16 +173,16 @@ public sealed class AppLifecycleTests
                 {
                     ingestionFailure = ex;
                 }
-            });
+            }, TestContext.CancellationToken);
 
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
-            await Task.Run(app.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
-            await producer.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(app.Dispose, TestContext.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
+            await producer.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
 
             Assert.IsNull(ingestionFailure);
             Assert.IsTrue(File.Exists(path));
-            Assert.IsTrue(TestFixtures.ReadQuestionNames(path).Count > 0);
+            Assert.IsNotEmpty(TestFixtures.ReadQuestionNames(path));
         }
         finally
         {
@@ -211,4 +211,6 @@ public sealed class AppLifecycleTests
 
         Assert.IsTrue(rejected);
     }
+
+    public TestContext TestContext { get; set; }
 }

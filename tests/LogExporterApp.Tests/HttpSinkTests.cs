@@ -1,11 +1,9 @@
 using LogExporter.Sinks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net;
-using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class HttpSinkTests
@@ -23,7 +21,7 @@ public sealed class HttpSinkTests
         {
             await ServeHttpResponseAsync(listener, "500 Internal Server Error");
             await ServeHttpResponseAsync(listener, "204 No Content");
-        });
+        }, TestContext.CancellationToken);
 
         var firstFailed = false;
 
@@ -44,7 +42,7 @@ public sealed class HttpSinkTests
             [TestFixtures.CreateLogEntry("http-recovery.example")],
             CancellationToken.None);
 
-        await server.WaitAsync(TimeSpan.FromSeconds(2));
+        await server.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
     }
 
     private static async Task ServeHttpResponseAsync(
@@ -81,4 +79,6 @@ public sealed class HttpSinkTests
         await stream.WriteAsync(bytes);
         await stream.FlushAsync();
     }
+
+    public TestContext TestContext { get; set; }
 }
