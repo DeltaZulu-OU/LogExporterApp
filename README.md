@@ -73,14 +73,14 @@ Provide JSON configuration similar to the following:
 
 ### Sink options
 
-* `maxQueueSize` sets the capacity, in log entries, of the bounded processing stages and of each sink's independent ingress queue. When a queue is full, new entries for that queue are dropped instead of allowing memory usage to grow without limit.
+* `maxQueueSize` sets the capacity, in log entries, of the bounded processing stages and of each sink's independent ingress queue. A sink worker may additionally hold one in-flight batch while exporting or retrying. When a queue is full, new entries for that queue are dropped instead of allowing memory usage to grow without limit.
 * `enableEdnsLogging` controls whether EDNS Extended DNS Error data is included in exported logs.
 * `console` writes logs to standard output, which is useful for containerized deployments and debugging.
 * `file` writes logs to the configured local file path.
 * `http` sends batches to the configured endpoint using HTTP POST as newline-delimited JSON (NDJSON). HTTP records include the responding server's hostname.
 * `syslog` exports logs to a Syslog server. Supported protocols are `UDP`, `TCP`, `TLS`, and `LOCAL`.
   * `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it. `LOCAL` ignores `address`.
-  * An FQDN is resolved once the DNS server starts answering queries, not while the app loads, and resolution is retried briefly if it fails. With `UDP`, the resolved address is kept until the configuration is saved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
+  * An FQDN is resolved once the DNS server starts answering queries, not while the app loads. If resolution is temporarily unavailable, the Syslog sink retries in the background with capped exponential backoff and jitter until resolution succeeds or the sink is disposed. With `UDP`, the successfully resolved address is kept for the lifetime of the sink. If the Syslog server's IP address changes, restart Technitium DNS Server or reload the Log Exporter configuration so the target is resolved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
 
 Individual sink sections may be omitted entirely. An omitted sink is disabled. When a sink section is present, its sink-specific required values are validated only if that sink is enabled. For example, a disabled or omitted HTTP sink does not require an `endpoint`.
 
@@ -191,3 +191,4 @@ Formatted for easier review:
 * The normalization cache uses Public Suffix List based parsing and is optimized for DNS-style query patterns where many domains may be seen only once.
 * EDNS logging records Extended DNS Error data when enabled and parses malformed EDE payloads defensively so they do not break the logging pipeline.
 * Static tags are intended for downstream processing, for example tenant labels, environment labels, or collector-side routing keys.
+* For UDP Syslog targets configured by FQDN, the resolved IP address is intentionally not refreshed periodically after the sink has started. Restart Technitium DNS Server or reload the Log Exporter configuration after the Syslog server's IP address changes.
