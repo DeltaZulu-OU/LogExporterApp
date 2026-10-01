@@ -37,25 +37,12 @@ namespace LogExporter.Sinks
     /// Exports query logs to a syslog server over UDP, TCP, TLS, or the local syslog daemon.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The Serilog logger is not built in the constructor. Technitium loads DNS apps before it
-    /// loads zones and binds its listeners, and <c>IDnsServer</c> exposes no readiness event.
-    /// Serilog's <c>UdpSyslog</c> resolves the host name synchronously while the logger is built,
-    /// so on a host whose resolver points at this DNS server the lookup failed with
-    /// <c>EAI_AGAIN</c> ("Resource temporarily unavailable") and aborted app initialization.
-    /// </para>
-    /// <para>
-    /// The logger is therefore built in the background once the <c>serverReady</c> task
-    /// completes. <see cref="App"/> completes it on the first query log, which the DNS server
-    /// can only deliver once it is serving. Name resolution is then retried in the background
-    /// until it succeeds or the sink is disposed, see <see cref="ResolveWithRetryAsync"/>.
-    /// </para>
-    /// <para>
-    /// The address may be an IP address or an FQDN. For UDP, an FQDN is resolved once per
-    /// configuration load, matching Serilog's own UDP behaviour; a collector that moves to a new
-    /// IP is picked up when the configuration is saved again. TCP and TLS pass the FQDN to Serilog,
-    /// which resolves it again on every reconnect and validates the TLS certificate against it.
-    /// </para>
+    /// Remote transport creation is deferred until the DNS server is answering queries so a host
+    /// that resolves through its own Technitium instance cannot deadlock application startup.
+    /// Name resolution is retried in the background until it succeeds or the sink is disposed.
+    ///
+    /// UDP resolves an FQDN once per configuration load. TCP and TLS keep the configured host name
+    /// so reconnects can resolve it again and TLS certificate validation uses the original name.
     /// </remarks>
     public sealed class SyslogSink : IOutputSink
     {
@@ -175,9 +162,8 @@ namespace LogExporter.Sinks
         /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
         /// </summary>
         /// <remarks>
-        /// The logger may still be under construction, so it is disposed by a continuation rather
-        /// than directly. Blocking here until construction finishes could hold up a config reload
-        /// for the whole resolution retry window.
+        /// The transport may still be under construction, so it is disposed by a continuation
+        /// rather than blocking a configuration reload until name resolution completes.
         /// </remarks>
         public void Dispose()
         {
@@ -324,13 +310,12 @@ namespace LogExporter.Sinks
         #region private
 
         /// <summary>
-        /// Waits until the DNS server is serving, then builds the Serilog logger.
+        /// Waits until the DNS server is serving, then creates the configured Syslog transport.
         /// </summary>
         /// <remarks>
-        /// UDP is the only transport Serilog resolves while building the logger, and it does so
-        /// synchronously. The host is resolved asynchronously here and Serilog receives an IP
-        /// literal instead. TCP and TLS resolve when they connect, and TLS needs the host name
-        /// for certificate validation, so both keep the configured address.
+        /// UDP is resolved asynchronously here and receives an IP literal. TCP and TLS keep the
+        /// configured host name so they can resolve on reconnect and TLS can validate the server
+        /// certificate against that name.
         /// </remarks>
         /// <returns>The transport, or <see langword="null"/> when the sink was disposed or cannot
         /// be created. Failures are reported through the log callback.</returns>
