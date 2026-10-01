@@ -74,6 +74,7 @@ namespace LogExporter.Sinks
         private readonly Action<string>? _log;
         private readonly Func<string, ISyslogTransport> _transportFactory;
         private readonly Func<int, TimeSpan> _retryDelayFactory;
+        private readonly Func<string, CancellationToken, Task<IPAddress>> _resolveAsync;
 
         /// <summary>
         ///     Initializes a new instance of the cancellation token source used to signal disposal and cancel ongoing operations.
@@ -123,7 +124,8 @@ namespace LogExporter.Sinks
             Task serverReady,
             Action<string>? log,
             Func<string, ISyslogTransport>? transportFactory,
-            Func<int, TimeSpan>? retryDelayFactory)
+            Func<int, TimeSpan>? retryDelayFactory,
+            Func<string, CancellationToken, Task<IPAddress>>? resolveAsync = null)
         {
             _address = address;
             _port = port ?? DEFAULT_PORT;
@@ -135,9 +137,10 @@ namespace LogExporter.Sinks
                 throw new NotSupportedException($"protocol '{protocol}' is not supported. Use UDP, TCP, TLS, or LOCAL.");
             }
 
-            if (_protocol == "local" && !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
+            if (_protocol == "local" && !OperatingSystem.IsLinux())
             {
-                throw new NotSupportedException("protocol LOCAL requires a Unix syslog daemon and is not available on this platform.");
+                throw new NotSupportedException(
+                    "protocol LOCAL requires the Linux local syslog service and is not available on this platform.");
             }
 
             if (_protocol != "local" && string.IsNullOrWhiteSpace(address))
@@ -150,6 +153,8 @@ namespace LogExporter.Sinks
 
             _retryDelayFactory = retryDelayFactory
                 ?? (failureCount => GetRetryDelay(failureCount, Random.Shared.NextDouble()));
+
+            _resolveAsync = resolveAsync ?? ResolveAsync;
 
             _transportTask = CreateTransportWhenReadyAsync(serverReady, _disposeCts.Token);
         }
@@ -247,7 +252,7 @@ namespace LogExporter.Sinks
                 catch (SocketException ex) when (ex.SocketErrorCode == SocketError.MessageSize)
                 {
                     _log?.Invoke(
-                        "Syslog dropped one entry because the formatted message exceeds the local transport's maximum message size.");
+                        "Syslog dropped one entry because the formatted message exceeds the transport's maximum message size.");
                     return;
                 }
                 catch (Exception ex) when (IsRetryableTransportFailure(ex, token))
@@ -272,7 +277,7 @@ namespace LogExporter.Sinks
             {
                 retryState.Degraded = true;
                 _log?.Invoke(
-                    $"Syslog local transport unavailable ({GetTransportErrorName(ex)}); " +
+                    $"Syslog transport unavailable ({GetTransportErrorName(ex)}); " +
                     "buffering logs and retrying.");
             }
 
@@ -301,6 +306,9 @@ namespace LogExporter.Sinks
             public int FailureCount { get; set; }
         }
 
+        // Transport failures, including TLS authentication failures, are retried until
+        // cancellation. External transport state may recover without a configuration reload,
+        // while the bounded sink queue limits retained work.
         internal static bool IsRetryableTransportFailure(Exception ex, CancellationToken token) =>
             ex is SocketException
             || ex is IOException
@@ -371,7 +379,7 @@ namespace LogExporter.Sinks
             {
                 try
                 {
-                    var address = await ResolveAsync(host, token).ConfigureAwait(false);
+                    var address = await _resolveAsync(host, token).ConfigureAwait(false);
 
                     if (degraded)
                     {
@@ -392,11 +400,10 @@ namespace LogExporter.Sinks
                             "retrying in the background.");
                     }
 
-                    var delay = GetRetryDelay(
-                        failureCount,
-                        Random.Shared.NextDouble());
-
-                    await Task.Delay(delay, token).ConfigureAwait(false);
+                    await Task.Delay(
+                            _retryDelayFactory(failureCount),
+                            token)
+                        .ConfigureAwait(false);
                 }
             }
         }
