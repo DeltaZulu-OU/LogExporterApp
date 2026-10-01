@@ -36,6 +36,42 @@ public sealed class SyslogSinkTests
     }
 
     [TestMethod]
+    public async Task ResolutionRetryUsesInjectedDelayFactoryAsync()
+    {
+        var attempts = 0;
+        var delayCalls = new List<int>();
+
+        using var sink = new SyslogSink(
+            "syslog.example",
+            514,
+            "udp",
+            Task.CompletedTask,
+            _ => { },
+            _ => new TestSyslogTransport(failureAttempt: int.MaxValue),
+            failureCount =>
+            {
+                delayCalls.Add(failureCount);
+                return TimeSpan.Zero;
+            },
+            (_, _) =>
+            {
+                attempts++;
+                if (attempts == 1)
+                {
+                    throw new SocketException((int)SocketError.TryAgain);
+                }
+
+                return Task.FromResult(System.Net.IPAddress.Loopback);
+            });
+
+        await sink.ExportAsync(
+            [TestFixtures.CreateLogEntry("resolution-retry.example")],
+            CancellationToken.None);
+
+        Assert.AreSequenceEqual(new[] { 1 }, delayCalls);
+    }
+
+    [TestMethod]
     public async Task TransportFailureRetainsFailedAndRemainingEntriesAsync()
     {
         using var transport = new TestSyslogTransport(failureAttempt: 2);
