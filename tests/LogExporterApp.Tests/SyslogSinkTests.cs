@@ -70,6 +70,41 @@ public sealed class SyslogSinkTests
     }
 
     [TestMethod]
+    public async Task OversizedUdpEntryDoesNotBlockFollowingEntriesAsync()
+    {
+        using var transport = new TestSyslogTransport(
+            failureAttempt: 1,
+            failure: new SocketException((int)SocketError.MessageSize));
+        var messages = new List<string>();
+
+        using var sink = new SyslogSink(
+            "127.0.0.1",
+            514,
+            "udp",
+            Task.CompletedTask,
+            messages.Add,
+            _ => transport,
+            _ => TimeSpan.Zero);
+
+        await sink.ExportAsync(
+            [
+                TestFixtures.CreateLogEntry("oversized.example"),
+                TestFixtures.CreateLogEntry("next.example")
+            ],
+            CancellationToken.None);
+
+        Assert.AreSequenceEqual(
+            new[] { "oversized.example", "next.example" },
+            transport.AttemptedNames.ToArray());
+        Assert.AreSequenceEqual(
+            new[] { "next.example" },
+            transport.DeliveredNames.ToArray());
+        Assert.ContainsSingle(
+            message => message.Contains("maximum message size"),
+            messages);
+    }
+
+    [TestMethod]
     public async Task TransportRetryCanBeCancelledAsync()
     {
         using var transport = new TestSyslogTransport(failureAttempt: 1);
@@ -105,12 +140,17 @@ internal sealed class TestSyslogTransport : ISyslogTransport
     private readonly List<string> _attemptedNames = new();
     private readonly List<string> _deliveredNames = new();
     private readonly int _failureAttempt;
+    private readonly Exception _failure;
     private int _attempts;
     private bool _failed;
 
-    internal TestSyslogTransport(int failureAttempt)
+    internal TestSyslogTransport(
+        int failureAttempt,
+        Exception? failure = null)
     {
         _failureAttempt = failureAttempt;
+        _failure = failure
+            ?? new SocketException((int)SocketError.NetworkUnreachable);
     }
 
     internal IReadOnlyList<string> AttemptedNames => _attemptedNames;
@@ -127,7 +167,7 @@ internal sealed class TestSyslogTransport : ISyslogTransport
         if (!_failed && attempt == _failureAttempt)
         {
             _failed = true;
-            throw new SocketException((int)SocketError.NetworkUnreachable);
+            throw _failure;
         }
 
         _deliveredNames.Add(name);
