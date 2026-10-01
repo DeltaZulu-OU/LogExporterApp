@@ -83,6 +83,7 @@ Provide JSON configuration similar to the following:
   * In containers, prefer `console` when your platform already collects standard output. A sidecar or the platform's logging infrastructure can then handle forwarding and delivery policy. If that is not available or not desired, configure `UDP`, `TCP`, or `TLS` to send directly to a remote Syslog target.
   * For remote Syslog, `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it.
   * An FQDN is resolved once the DNS server starts answering queries, not while the app loads. If resolution is temporarily unavailable, the Syslog sink retries in the background with capped exponential backoff and jitter until resolution succeeds or the sink is disposed. With `UDP`, the successfully resolved address is kept for the lifetime of the sink. If the Syslog server's IP address changes, restart Technitium DNS Server or reload the Log Exporter configuration so the target is resolved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
+  * For `TCP` and `TLS`, an ambiguous write failure may cause the current record to be retried even if the remote peer already received it. Direct remote Syslog therefore favors avoiding loss over avoiding duplicates.
 
 Individual sink sections may be omitted entirely. An omitted sink is disabled. When a sink section is present, its sink-specific required values are validated only if that sink is enabled. For example, a disabled or omitted HTTP sink does not require an `endpoint`.
 
@@ -193,5 +194,10 @@ Formatted for easier review:
 * The normalization cache uses Public Suffix List based parsing and is optimized for DNS-style query patterns where many domains may be seen only once.
 * EDNS logging records Extended DNS Error data when enabled and parses malformed EDE payloads defensively so they do not break the logging pipeline.
 * Static tags are intended for downstream processing, for example tenant labels, environment labels, or collector-side routing keys.
-* On host installations, prefer `LOCAL` Syslog and delegate remote forwarding and delivery policy to rsyslog or another local Syslog daemon. For containers, prefer `console` with the platform's logging stack or a sidecar when available; direct remote Syslog is an alternative when container logging infrastructure is not used.
+* On Linux host installations, prefer `LOCAL` Syslog and delegate remote forwarding and delivery policy to rsyslog or another local Syslog daemon. For containers, prefer `console` with the platform's logging stack or a sidecar when available; direct remote Syslog is an alternative when container logging infrastructure is not used.
 * For UDP Syslog targets configured by FQDN, the resolved IP address is intentionally not refreshed periodically after the sink has started. Restart Technitium DNS Server or reload the Log Exporter configuration after the Syslog server's IP address changes.
+
+
+### Reload accounting
+
+Configuration reload validates the replacement configuration before stopping the active pipeline, then drains the old generation before rebuilding sinks and processors. During the brief cutover interval, query logs that arrive while no ingestion generation is published are intentionally ignored. Those entries are not included in the queue-drop counters. This is an accepted lifecycle trade-off: adding a dedicated reload-state accounting path would increase control-plane complexity for a short, bounded transition.
