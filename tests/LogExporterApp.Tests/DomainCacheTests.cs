@@ -1,9 +1,8 @@
 using LogExporter.Pipeline;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Nager.PublicSuffix;
 using Nager.PublicSuffix.RuleProviders;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class DomainCacheTests
@@ -17,7 +16,7 @@ public sealed class DomainCacheTests
         const string domainName = "www.example.com";
 
         var pendingLookup = Task.Run(() => cache.GetOrAdd(domainName));
-        var beforeReady = await pendingLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        var beforeReady = await pendingLookup.WaitAsync(TimeSpan.FromSeconds(1), TestContext.CancellationToken);
 
         Assert.IsNull(beforeReady.RegistrableDomain);
 
@@ -34,10 +33,10 @@ public sealed class DomainCacheTests
                 org
                 co.uk
                 // ===END ICANN DOMAINS===
-                """);
+                """, TestContext.CancellationToken);
 
             var ruleProvider = new LocalFileRuleProvider(rulesPath);
-            await ruleProvider.BuildAsync();
+            await ruleProvider.BuildAsync(cancellationToken: TestContext.CancellationToken);
 
             parserSource.TrySetResult(new DomainParser(ruleProvider));
 
@@ -54,4 +53,6 @@ public sealed class DomainCacheTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    public TestContext TestContext { get; set; }
 }

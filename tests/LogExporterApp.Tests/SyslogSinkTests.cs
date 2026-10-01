@@ -1,8 +1,6 @@
 using System.Net.Sockets;
 using LogExporter.Sinks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class SyslogSinkTests
@@ -92,12 +90,14 @@ public sealed class SyslogSinkTests
             [TestFixtures.CreateLogEntry("cancel.example")],
             cts.Token);
 
-        await retryStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await retryStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
         cts.Cancel();
 
         await Assert.ThrowsExactlyAsync<TaskCanceledException>(
             async () => await export);
     }
+
+    public TestContext TestContext { get; set; }
 }
 
 internal sealed class TestSyslogTransport : ISyslogTransport

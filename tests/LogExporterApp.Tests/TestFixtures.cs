@@ -1,15 +1,14 @@
 using DnsServerCore.ApplicationCommon;
+using LogExporter;
 using LogExporter.Pipeline;
 using LogExporter.Sinks;
-using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
-using System.Threading;
 using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 internal static class TestFixtures
 {
