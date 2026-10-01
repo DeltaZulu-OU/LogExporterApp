@@ -4,24 +4,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   APP_NAME: ${{ github.event.repository.name }}
 
 jobs:
-  build-and-release:
-    runs-on: windows-latest
+  metadata:
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
 
       - name: Read release metadata from project file
         id: metadata
@@ -62,6 +60,60 @@ jobs:
           if (-not [string]::IsNullOrWhiteSpace($existingTag)) {
             throw "Tag '$tag' already exists. Bump <Version> in src/$env:APP_NAME.csproj before releasing."
           }
+
+  build-linux:
+    needs: metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.x'
+
+      # Follows the upstream Linux build instructions
+      # (https://github.com/TechnitiumSoftware/DnsServer/blob/master/build.md): TechnitiumLibrary
+      # is built first so DnsServerCore.ApplicationCommon resolves its TechnitiumLibrary.Net
+      # reference from TechnitiumLibrary/bin without patching the upstream project.
+      - name: Build TechnitiumLibrary
+        run: dotnet build upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
+
+      - name: Build app
+        run: dotnet build "src/$APP_NAME.csproj" -c Release
+
+      - name: Prepare release package
+        shell: pwsh
+        run: ./.github/scripts/New-ReleasePackage.ps1 -AppName $env:APP_NAME -Version '${{ needs.metadata.outputs.version }}'
+
+      - name: Upload Linux release package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-release-package
+          path: release/${{ env.APP_NAME }}-${{ needs.metadata.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  build-and-release:
+    needs: [metadata, build-linux]
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57
 
       - name: Replace upstream DLL reference with project reference
         shell: pwsh
@@ -112,57 +164,36 @@ jobs:
         id: artifacts
         shell: pwsh
         run: |
-          $version = '${{ steps.metadata.outputs.version }}'
-
-          $outputPath = 'src/bin/Release'
-          $configPath = "$outputPath/dnsApp.config"
-          $readmePath = 'README.md'
-          $pdbPath    = "$outputPath/$env:APP_NAME.pdb"
-          $depsPath    = "$outputPath/$env:APP_NAME.deps.json"
-
-          if (-not (Test-Path $outputPath)) {
-            throw "Build output folder not found at '$outputPath'."
-          }
-
-          $dlls = Get-ChildItem -Path $outputPath -Filter '*.dll' -File
-
-          if (-not $dlls) {
-            throw "No DLL files found in '$outputPath' after excluding DLLs starting with 'Technitium'."
-          }
-
-          if (-not (Test-Path $configPath)) {
-            throw "DNS app config file not found at '$configPath'."
-          }
-
-          if (-not (Test-Path $readmePath)) {
-            throw "README file not found at '$readmePath'."
-          }
-
-          $stagingPath = "release/$env:APP_NAME"
-          $zipPath = "release/$env:APP_NAME-$version.zip"
-
-          New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
-          foreach ($dll in $dlls) { Copy-Item $dll.FullName "$stagingPath/$($dll.Name)" }
-          Copy-Item $pdbPath "$stagingPath/$env:APP_NAME.pdb"
-          Copy-Item $depsPath "$stagingPath/$env:APP_NAME.deps.json"
-          Copy-Item $configPath "$stagingPath/dnsApp.config"
-          Copy-Item $readmePath "$stagingPath/README.md"
-
-          Compress-Archive -Path "$stagingPath/*" -DestinationPath $zipPath -Force
-
+          $zipPath = ./.github/scripts/New-ReleasePackage.ps1 -AppName $env:APP_NAME -Version '${{ needs.metadata.outputs.version }}'
           "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Download Linux release package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: linux-release-package
+          path: release-linux
+
+      # The published zip is always the Windows build. The Linux build must contain the same
+      # files, otherwise the release stops before anything is tagged or published.
+      - name: Verify Linux package matches release package
+        shell: pwsh
+        run: |
+          ./.github/scripts/Compare-ReleasePackage.ps1 `
+            -AppName $env:APP_NAME `
+            -ExpectedZip '${{ steps.artifacts.outputs.zip_path }}' `
+            -ActualZip "release-linux/$env:APP_NAME-${{ needs.metadata.outputs.version }}.zip"
 
       - name: Create and push git tag
         shell: pwsh
         run: |
-          $tag = '${{ steps.metadata.outputs.tag }}'
+          $tag = '${{ needs.metadata.outputs.tag }}'
           git tag $tag
           git push origin "refs/tags/$tag"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
-          tag_name: ${{ steps.metadata.outputs.tag }}
-          name: ${{ env.APP_NAME }} v${{ steps.metadata.outputs.version }}
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: ${{ env.APP_NAME }} v${{ needs.metadata.outputs.version }}
           generate_release_notes: true
           files: ${{ steps.artifacts.outputs.zip_path }}

@@ -73,3 +73,30 @@ jobs:
         shell: pwsh
         run: |
           dotnet test "tests/LogExporterApp.Tests/LogExporterApp.Tests.csproj" --configuration Release --no-build
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.x'
+
+      # Follows the upstream Linux build instructions
+      # (https://github.com/TechnitiumSoftware/DnsServer/blob/master/build.md): TechnitiumLibrary
+      # is built first so DnsServerCore.ApplicationCommon resolves its TechnitiumLibrary.Net
+      # reference from TechnitiumLibrary/bin without patching the upstream project.
+      - name: Build TechnitiumLibrary
+        run: dotnet build upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
+
+      - name: Build app and tests
+        run: dotnet build tests/LogExporterApp.Tests/LogExporterApp.Tests.csproj -c Release
+
+      - name: Run unit tests
+        run: dotnet test tests/LogExporterApp.Tests/LogExporterApp.Tests.csproj -c Release --no-build
