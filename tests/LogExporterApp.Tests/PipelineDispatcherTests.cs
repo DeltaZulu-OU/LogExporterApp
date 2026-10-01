@@ -1,7 +1,6 @@
 using LogExporter.Pipeline;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class PipelineDispatcherTests
@@ -17,9 +16,8 @@ public sealed class PipelineDispatcherTests
 
         dispatcher.Run(TestFixtures.CreateLogEntry("order.example"));
 
-        CollectionAssert.AreEqual(
-            new[] { "first", "second" },
-            order);
+        Assert.AreSequenceEqual(
+            new[] { "first", "second" }, order);
     }
 
     [TestMethod]
@@ -60,9 +58,8 @@ public sealed class PipelineDispatcherTests
 
         dispatcher.Run(TestFixtures.CreateLogEntry("reorder.example"));
 
-        CollectionAssert.AreEqual(
-            new[] { "second", "first" },
-            order);
+        Assert.AreSequenceEqual(
+            new[] { "second", "first" }, order);
     }
 
     [TestMethod]

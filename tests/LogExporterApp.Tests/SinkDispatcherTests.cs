@@ -1,7 +1,6 @@
 using LogExporter.Sinks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace LogExporter.Tests;
+namespace LogExporterApp.Tests;
 
 [TestClass]
 public sealed class SinkDispatcherTests
@@ -18,14 +17,14 @@ public sealed class SinkDispatcherTests
 
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
 
-        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await fast.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        await fast.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.AreEqual(1, fast.Count);
         Assert.IsFalse(slow.Release.Task.IsCompleted);
 
         slow.Release.TrySetResult();
-        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
     }
 
     [TestMethod]
@@ -39,20 +38,20 @@ public sealed class SinkDispatcherTests
         dispatcher.Add(fast, 16);
 
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         for (var i = 0; i < 3; i++)
         {
             await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
         }
 
-        await fast.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fast.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         slow.Release.TrySetResult();
-        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.AreEqual(4, fast.Count);
-        Assert.IsTrue(slow.Count < fast.Count);
+        Assert.IsLessThan(fast.Count, slow.Count);
     }
 
     [TestMethod]
@@ -64,16 +63,16 @@ public sealed class SinkDispatcherTests
         dispatcher.Add(slow, 16);
 
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         var drain = dispatcher.DrainAsync();
 
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.CancellationToken);
         Assert.IsFalse(drain.IsCompleted);
 
         slow.Release.TrySetResult();
 
-        await drain.WaitAsync(TimeSpan.FromSeconds(2));
+        await drain.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
         Assert.AreEqual(1, slow.Count);
     }
 
@@ -85,11 +84,11 @@ public sealed class SinkDispatcherTests
 
         dispatcher.Add(slow, 16);
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         var drained = await dispatcher
             .DrainAsync(TimeSpan.FromMilliseconds(50))
-            .WaitAsync(TimeSpan.FromSeconds(2));
+            .WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.IsFalse(drained);
     }
@@ -105,10 +104,10 @@ public sealed class SinkDispatcherTests
         for (var i = 1; i <= 3; i++)
         {
             await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-            await sink.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2));
+            await sink.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
         }
 
-        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.AreEqual(3, sink.Attempts);
         Assert.AreEqual(1, sink.Successes);
@@ -129,10 +128,10 @@ public sealed class SinkDispatcherTests
         for (var i = 1; i <= 3; i++)
         {
             await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-            await sink.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2));
+            await sink.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
         }
 
-        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.AreEqual(1, errorCount);
     }
@@ -150,12 +149,14 @@ public sealed class SinkDispatcherTests
         for (var i = 1; i <= 3; i++)
         {
             await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
-            await failing.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2));
+            await failing.WaitForAttemptAsync(i).WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
         }
 
-        await healthy.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await healthy.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
         Assert.AreEqual(3, healthy.Count);
     }
+
+    public TestContext TestContext { get; set; }
 }
