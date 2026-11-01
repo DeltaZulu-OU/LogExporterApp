@@ -117,6 +117,7 @@ namespace LogExporter
                     continue;
                 }
 
+                // Read typed EDE fields to preserve extra text without parsing ToString().
                 edns ??= new List<EDNSLog>();
                 edns.Add(new EDNSLog
                 {
