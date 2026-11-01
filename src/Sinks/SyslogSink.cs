@@ -23,6 +23,7 @@ using Serilog.Parsing;
 using Serilog.Sinks.Syslog;
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Net;
 using System.Net.Sockets;
 using System.IO;
@@ -89,7 +90,7 @@ namespace LogExporter.Sinks
         private bool _disposed;
 
         // Reuse the message template instead of parsing it per-log
-        private const string TemplateText = "{questionsSummary}; RCODE: {rCode}; ANSWER: [{answersSummary}]";
+        private const string TemplateText = "{questionsSummary}; RCODE: {rCode}; ANSWER: {answersSummary}";
         private static readonly MessageTemplate Template =
             new MessageTemplateParser().Parse(TemplateText);
 
@@ -477,12 +478,16 @@ namespace LogExporter.Sinks
                 "responseType",
                 new ScalarValue(log.ResponseType.ToString())),
                 new LogEventProperty(
-                "responseRtt",
-                new ScalarValue(log.ResponseRtt?.ToString())),
-                new LogEventProperty(
                 "rCode",
                 new ScalarValue(log.ResponseCode.ToString()))
             };
+
+            if (log.ResponseRtt is double rtt)
+            {
+                properties.Add(new LogEventProperty(
+                    "responseRtt",
+                    new ScalarValue(rtt.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+            }
 
             // Question
             if (log.Question != null)
@@ -573,15 +578,7 @@ namespace LogExporter.Sinks
             AddEdnsProperties(properties, log.EDNS);
 
             // Meta
-            if (log.Meta.Count > 0)
-            {
-                foreach (var enrichment in log.Meta)
-                {
-                    var k = enrichment.Key;
-                    var v = enrichment.Value;
-                    properties.Add(new LogEventProperty(k, new ScalarValue(v)));
-                }
-            }
+            AddMetaProperties(properties, log.Meta);
 
             // Reuse the static MessageTemplate 'Template'
             return new LogEvent(
@@ -607,6 +604,71 @@ namespace LogExporter.Sinks
                         $"ednsMessage_{i}",
                         new ScalarValue(entry.Message)));
                 }
+            }
+        }
+
+        private static void AddMetaProperties(
+            List<LogEventProperty> properties,
+            Dictionary<string, object> metadata)
+        {
+            foreach (var (key, value) in metadata)
+            {
+                if (value is null)
+                {
+                    continue;
+                }
+
+                if (key == "tags" && value is string[] tags)
+                {
+                    for (var i = 0; i < tags.Length; i++)
+                    {
+                        properties.Add(new LogEventProperty(
+                            $"tag_{i}", new ScalarValue(tags[i])));
+                    }
+
+                    continue;
+                }
+
+                if (key == "domainInfo")
+                {
+                    var domain = JsonSerializer.SerializeToElement(
+                        value, LogEntry.DnsLogSerializerOptions.Default);
+
+                    AddDomainProperty(properties, domain, "domain", "domainName");
+                    AddDomainProperty(properties, domain, "topLevelDomain", "domainTld");
+                    AddDomainProperty(properties, domain, "registrableDomain", "domainRegistrable");
+                    AddDomainProperty(properties, domain, "fullyQualifiedDomainName", "domainFqdn");
+
+                    if (domain.TryGetProperty("topLevelDomainRule", out var rule)
+                        && rule.ValueKind == JsonValueKind.Object)
+                    {
+                        AddDomainProperty(properties, rule, "name", "domainRuleName");
+                        AddDomainProperty(properties, rule, "type", "domainRuleType");
+                        AddDomainProperty(properties, rule, "labelCount", "domainRuleLabels");
+                        AddDomainProperty(properties, rule, "division", "domainRuleDivision");
+                    }
+
+                    continue;
+                }
+
+                // Preserve other complex enrichment values as JSON rather than .NET type names.
+                var text = value is string || value.GetType().IsValueType
+                    ? value.ToString()
+                    : JsonSerializer.Serialize(value, LogEntry.DnsLogSerializerOptions.Default);
+                properties.Add(new LogEventProperty(key, new ScalarValue(text)));
+            }
+        }
+
+        private static void AddDomainProperty(
+            List<LogEventProperty> properties,
+            JsonElement source,
+            string member,
+            string name)
+        {
+            if (source.TryGetProperty(member, out var value)
+                && value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+            {
+                properties.Add(new LogEventProperty(name, new ScalarValue(value.ToString())));
             }
         }
 
