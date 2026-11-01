@@ -168,6 +168,45 @@ public sealed class SyslogSinkTests
             async () => await export);
     }
 
+    [TestMethod]
+    public async Task SyslogPreservesEnrichmentAndOmitsNullRttAsync()
+    {
+        using var transport = new PropertyCaptureTransport();
+        using var sink = new SyslogSink(
+            "127.0.0.1", 514, "udp", Task.CompletedTask,
+            _ => { }, _ => transport, _ => TimeSpan.Zero);
+
+        var entry = TestFixtures.CreateLogEntry("example.com");
+        entry.Meta["tags"] = new[] { "tenant:alpha", "environment:test" };
+        entry.Meta["domainInfo"] = new
+        {
+            domain = "example",
+            topLevelDomain = "com",
+            registrableDomain = "example.com",
+            fullyQualifiedDomainName = "example.com",
+            topLevelDomainRule = new { name = "com", type = "Normal", labelCount = 1, division = "ICANN" }
+        };
+
+        await sink.ExportAsync([entry], CancellationToken.None);
+
+        Assert.HasCount(1, transport.Events);
+        var properties = transport.Events[0].Properties;
+        Assert.IsFalse(properties.ContainsKey("responseRtt"));
+        Assert.IsFalse(properties.ContainsKey("tags"));
+        Assert.IsFalse(properties.ContainsKey("domainInfo"));
+        Assert.AreEqual("tenant:alpha", GetScalar(properties, "tag_0"));
+        Assert.AreEqual("environment:test", GetScalar(properties, "tag_1"));
+        Assert.AreEqual("example.com", GetScalar(properties, "domainRegistrable"));
+        Assert.AreEqual("com", GetScalar(properties, "domainTld"));
+        Assert.AreEqual("ICANN", GetScalar(properties, "domainRuleDivision"));
+        Assert.AreEqual("1", GetScalar(properties, "domainRuleLabels"));
+    }
+
+    private static string? GetScalar(
+        IReadOnlyDictionary<string, Serilog.Events.LogEventPropertyValue> properties,
+        string name) =>
+        ((Serilog.Events.ScalarValue)properties[name]).Value?.ToString();
+
     public TestContext TestContext { get; set; }
 }
 
@@ -213,4 +252,18 @@ internal sealed class TestSyslogTransport : ISyslogTransport
     public void Dispose()
     {
     }
+}
+
+internal sealed class PropertyCaptureTransport : ISyslogTransport
+{
+    public List<Serilog.Events.LogEvent> Events { get; } = new();
+
+    public Task SendAsync(Serilog.Events.LogEvent logEvent, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        Events.Add(logEvent);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() { }
 }
