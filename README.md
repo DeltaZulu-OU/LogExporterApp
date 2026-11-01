@@ -192,7 +192,7 @@ Formatted for easier review:
 
 * The app uses bounded channels rather than unbounded queues. Each sink has its own ingress queue and worker, so a slow or unavailable sink does not block the other sinks. Under sustained overload, only the full queue drops new entries and reports the drop count periodically.
 * The normalization cache uses Public Suffix List based parsing and is optimized for DNS-style query patterns where many domains may be seen only once.
-* EDNS logging records Extended DNS Error data when enabled and parses malformed EDE payloads defensively so they do not break the logging pipeline.
+* EDNS logging records Extended DNS Error (EDE) information when enabled. The exporter reads the information code and optional extra text directly from TechnitiumLibrary's typed EDE representation, preserving extra text without modification.
 * Static tags are intended for downstream processing, for example tenant labels, environment labels, or collector-side routing keys.
 * On Linux host installations, prefer `LOCAL` Syslog and delegate remote forwarding and delivery policy to rsyslog or another local Syslog daemon. For containers, prefer `console` with the platform's logging stack or a sidecar when available; direct remote Syslog is an alternative when container logging infrastructure is not used.
 * For UDP Syslog targets configured by FQDN, the resolved IP address is intentionally not refreshed periodically after the sink has started. Restart Technitium DNS Server or reload the Log Exporter configuration after the Syslog server's IP address changes.
