@@ -10,6 +10,8 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 
 > NOTE: This app is not included in the main Technitium DNS Server repository as of [v15](https://github.com/TechnitiumSoftware/DnsServer/blob/master/CHANGELOG.md#version-150).
 
+> Last tested with Technitium DNS Server 15.6.2.
+
 ## Features
 
 - Captures DNS queries and responses through the Technitium DNS Server `IDnsQueryLogger` interface.
@@ -113,78 +115,85 @@ The normalization stage uses the Public Suffix List to derive domain structure. 
 
 ## Sample `dig` result for `technitium.com`
 
-```bash
-dig '@127.0.0.1' technitium.com
 
-; <<>> DiG 9.16.25 <<>> @127.0.0.1 technitium.com
+After update. Dig output:
+```bash
+dig '@127.0.0.1' -p 535 adsflame.com
+
+; <<>> DiG 9.16.25 <<>> @127.0.0.1 -p 535 adsflame.com
 ; (1 server found)
 ;; global options: +cmd
 ;; Got answer:
-;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 62685
-;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 6128
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
 
 ;; OPT PSEUDOSECTION:
 ; EDNS: version: 0, flags:; udp: 1232
+; EDE: 15 (Blocked): (source=block-list-zone; blockListUrl=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts; domain=adsflame.com)
 ;; QUESTION SECTION:
-;technitium.com.                        IN      A
+;adsflame.com.                  IN      A
 
-;; ANSWER SECTION:
-technitium.com.         8218    IN      A       206.189.140.177
+;; AUTHORITY SECTION:
+com.                    30      IN      SOA     lap29. hostadmin.lap29. 1 14400 3600 604800 30
 
-;; Query time: 24 msec
-;; SERVER: 127.0.0.1#53(127.0.0.1)
-;; WHEN: Mon Dec 08 22:50:37 FLE Standard Time 2025
-;; MSG SIZE  rcvd: 59
+;; Query time: 0 msec
+;; SERVER: 127.0.0.1#535(127.0.0.1)
+;; WHEN: Sun Nov 01 21:50:50 FLE Standard Time 2026
+;; MSG SIZE  rcvd: 220
 ```
 
-## Sample log for `technitium.com`
+## Sample log
 
-Raw log:
+Syslog:
+```
+<182>1 2026-11-01T19:50:50.742761+00:00 LAP29 TechnitiumDNSServer 10800 - [meta timestamp="2026-11-01T19:50:50.742Z" clientIp="127.0.0.1" protocol="Udp" responseType="Blocked" rCode="NxDomain" qName="adsflame.com" qType="A" qClass="IN" questionsSummary="QNAME: adsflame.com, QTYPE: A, QCLASS: IN" answersSummary="" ednsErrType_0="Blocked" ednsMessage_0="source=block-list-zone; blockListUrl=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts; domain=adsflame.com" domainName="adsflame" domainTld="com" domainRegistrable="adsflame.com" domainFqdn="adsflame.com" domainRuleName="com" domainRuleType="Normal" domainRuleLabels="1" domainRuleDivision="ICANN" tag_0="tenant:alpha"] "QNAME: adsflame.com, QTYPE: A, QCLASS: IN"; RCODE: "NxDomain"; ANSWER: ""
+```
 
-```json
-{"answers":[{"dnssecStatus":"Disabled","name":"technitium.com","recordClass":"IN","recordData":"206.189.140.177","recordTtl":8218,"recordType":"A"}],"clientIp":"127.0.0.1","edns":[],"nameServer":"127.0.0.1","protocol":"Udp","question":{"questionClass":"IN","questionName":"technitium.com","questionType":"A"},"responseCode":"NoError","responseType":"Cached","timestamp":"2025-12-08T20:50:37.321Z","meta":{"domainInfo":{"domain":"technitium","topLevelDomain":"com","registrableDomain":"technitium.com","fullyQualifiedDomainName":"technitium.com","topLevelDomainRule":{"name":"com","type":"Normal","labelCount":1,"division":"ICANN"}}}}
+JSON:
+```
+{"answers":[],"clientIp":"127.0.0.1","edns":[{"errType":"Blocked","message":"source=block-list-zone; blockListUrl=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts; domain=adsflame.com"}],"nameServer":"127.0.0.1","protocol":"Udp","question":{"questionClass":"IN","questionName":"adsflame.com","questionType":"A"},"responseCode":"NxDomain","responseType":"Blocked","timestamp":"2026-11-01T19:50:50.742Z","meta":{"domainInfo":{"domain":"adsflame","topLevelDomain":"com","registrableDomain":"adsflame.com","fullyQualifiedDomainName":"adsflame.com","topLevelDomainRule":{"name":"com","type":"Normal","labelCount":1,"division":"ICANN"}},"tags":["tenant:alpha"]}}
 ```
 
 Formatted for easier review:
 
 ```json
 {
-  "answers": [
-    {
-      "dnssecStatus": "Disabled",
-      "name": "technitium.com",
-      "recordClass": "IN",
-      "recordData": "206.189.140.177",
-      "recordTtl": 8218,
-      "recordType": "A"
+    "answers": [],
+    "clientIp": "127.0.0.1",
+    "edns": [
+        {
+            "errType": "Blocked",
+            "message": "source=block-list-zone; blockListUrl=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts; domain=adsflame.com"
+        }
+    ],
+    "nameServer": "127.0.0.1",
+    "protocol": "Udp",
+    "question": {
+        "questionClass": "IN",
+        "questionName": "adsflame.com",
+        "questionType": "A"
+    },
+    "responseCode": "NxDomain",
+    "responseType": "Blocked",
+    "timestamp": "2026-11-01T19:50:50.742Z",
+    "meta": {
+        "domainInfo": {
+            "domain": "adsflame",
+            "topLevelDomain": "com",
+            "registrableDomain": "adsflame.com",
+            "fullyQualifiedDomainName": "adsflame.com",
+            "topLevelDomainRule": {
+                "name": "com",
+                "type": "Normal",
+                "labelCount": 1,
+                "division": "ICANN"
+            }
+        },
+        "tags": [
+            "tenant:alpha"
+        ]
     }
-  ],
-  "clientIp": "127.0.0.1",
-  "edns": [],
-  "nameServer": "127.0.0.1",
-  "protocol": "Udp",
-  "question": {
-    "questionClass": "IN",
-    "questionName": "technitium.com",
-    "questionType": "A"
-  },
-  "responseCode": "NoError",
-  "responseType": "Cached",
-  "timestamp": "2025-12-08T20:50:37.321Z",
-  "meta": {
-    "domainInfo": {
-      "domain": "technitium",
-      "topLevelDomain": "com",
-      "registrableDomain": "technitium.com",
-      "fullyQualifiedDomainName": "technitium.com",
-      "topLevelDomainRule": {
-        "name": "com",
-        "type": "Normal",
-        "labelCount": 1,
-        "division": "ICANN"
-      }
-    }
-  }
 }
 ```
 
