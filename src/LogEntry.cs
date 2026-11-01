@@ -109,47 +109,19 @@ namespace LogExporter
         {
             List<EDNSLog>? edns = null;
 
-            foreach (var extendedErrorLog in response.EDNS.Options)
+            foreach (var option in response.EDNS.Options)
             {
-                if (extendedErrorLog.Code != EDnsOptionCode.EXTENDED_DNS_ERROR)
+                if (option.Code != EDnsOptionCode.EXTENDED_DNS_ERROR ||
+                    option.Data is not EDnsExtendedDnsErrorOptionData ede)
                 {
                     continue;
-                }
-
-                // ADR: EDNS extended error comes from network input and may not follow
-                // the expected "type: message" format. Previously this code assumed
-                // a well-formed structure and could throw IndexOutOfRangeException,
-                // allowing remote parties to crash the logging pipeline.
-                // We now parse defensively and treat malformed data as a best-effort message.
-
-                var raw = extendedErrorLog.Data?.ToString();
-                if (string.IsNullOrWhiteSpace(raw))
-                {
-                    continue;
-                }
-
-                raw = raw.Replace("[", "").Replace("]", "");
-
-                string? errType = null;
-                string? message = null;
-
-                var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
-                if (parts.Length == 2)
-                {
-                    errType = parts[0];
-                    message = parts[1];
-                }
-                else
-                {
-                    // fallback: treat the raw payload as the message
-                    message = raw;
                 }
 
                 edns ??= new List<EDNSLog>();
                 edns.Add(new EDNSLog
                 {
-                    ErrType = errType,
-                    Message = message
+                    ErrType = ede.InfoCode.ToString(),
+                    Message = ede.ExtraText
                 });
             }
 
