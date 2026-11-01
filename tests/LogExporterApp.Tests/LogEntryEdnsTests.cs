@@ -127,11 +127,14 @@ public sealed class LogEntryEdnsTests
         {
             new(EDnsOptionCode.EXTENDED_DNS_ERROR,
                 new EDnsExtendedDnsErrorOptionData(EDnsExtendedDnsErrorCode.Blocked, "x")),
+            new((EDnsOptionCode)65000, new EDnsUnknownOptionData([1, 2, 3])),
             new(EDnsOptionCode.EXTENDED_DNS_ERROR,
                 new EDnsExtendedDnsErrorOptionData(EDnsExtendedDnsErrorCode.NotSupported, null))
         };
         var edns = CreateEntry(request, true, true, options).EDNS;
         Assert.HasCount(2, edns);
+        Assert.AreEqual("Blocked", edns[0].ErrType);
+        Assert.AreEqual("NotSupported", edns[1].ErrType);
     }
 
     [TestMethod]
