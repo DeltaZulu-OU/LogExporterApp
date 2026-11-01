@@ -570,24 +570,7 @@ namespace LogExporter.Sinks
             }
 
             // EDNS
-            if (log.EDNS.Length > 0)
-            {
-                for (var i = 0; i < log.EDNS.Length; i++)
-                {
-                    var ednsLog = log.EDNS[i];
-
-                    properties.Add(new LogEventProperty(
-                        $"ednsErrType_{i}",
-                        new ScalarValue(ednsLog.ErrType)));
-
-                    if (ednsLog.Message is not null)
-                    {
-                        properties.Add(new LogEventProperty(
-                            $"ednsMessage_{i}",
-                            new ScalarValue(ednsLog.Message)));
-                    }
-                }
-            }
+            AddEdnsProperties(properties, log.EDNS);
 
             // Meta
             if (log.Meta.Count > 0)
@@ -607,6 +590,24 @@ namespace LogExporter.Sinks
                 exception: null,
                 messageTemplate: Template,
                 properties: properties);
+        }
+
+        private static void AddEdnsProperties(List<LogEventProperty> properties, LogEntry.EDNSLog[] edns)
+        {
+            for (var i = 0; i < edns.Length; i++)
+            {
+                var entry = edns[i];
+                properties.Add(new LogEventProperty(
+                    $"ednsErrType_{i}",
+                    new ScalarValue(entry.ErrType)));
+
+                if (entry.Message is not null)
+                {
+                    properties.Add(new LogEventProperty(
+                        $"ednsMessage_{i}",
+                        new ScalarValue(entry.Message)));
+                }
+            }
         }
 
         #endregion
