@@ -580,9 +580,12 @@ namespace LogExporter.Sinks
                         $"ednsErrType_{i}",
                         new ScalarValue(ednsLog.ErrType)));
 
-                    properties.Add(new LogEventProperty(
-                        $"ednsMessage_{i}",
-                        new ScalarValue(ednsLog.Message)));
+                    if (ednsLog.Message is not null)
+                    {
+                        properties.Add(new LogEventProperty(
+                            $"ednsMessage_{i}",
+                            new ScalarValue(ednsLog.Message)));
+                    }
                 }
             }
 
