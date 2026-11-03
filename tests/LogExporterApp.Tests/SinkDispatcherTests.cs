@@ -169,5 +169,87 @@ public sealed class SinkDispatcherTests
             dispatcher.Add(sink, new SinkBatchOptions { BatchSize = 0 }));
     }
 
+    [TestMethod]
+    public async Task PartialWriteIsNotReplayedWithoutExplicitSinkOptInAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new PartialWriteSink();
+        dispatcher.Add(sink, FastRetryOptions);
+        await dispatcher.DispatchAsync(new[] {
+            TestFixtures.CreateLogEntry("one.example"),
+            TestFixtures.CreateLogEntry("two.example")
+        }, CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(1, sink.Attempts);
+        Assert.AreEqual("one.example", sink.Delivered[0]);
+        Assert.AreEqual(1, sink.Delivered.Count);
+        Assert.AreEqual(2L, dispatcher.GetCounters(typeof(PartialWriteSink)).FailedEvents);
+    }
+
+    [TestMethod]
+    public async Task RetryPolicyRejectsPermanentFailureAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new PermanentFailureSink();
+        dispatcher.Add(sink, FastRetryOptions);
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(1, sink.Attempts);
+        Assert.AreEqual(0L, dispatcher.GetCounters(typeof(PermanentFailureSink)).RetriedAttempts);
+    }
+
+    [TestMethod]
+    public async Task CooperativeAttemptIsCanceledAtRetryDeadlineAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new DeadlineSink();
+        dispatcher.Add(sink, FastRetryOptions with { RetryTimeLimit = TimeSpan.FromMilliseconds(80) });
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(1, sink.Attempts);
+        Assert.AreEqual(1L, dispatcher.GetCounters(typeof(DeadlineSink)).FailedEvents);
+    }
+
+    private sealed class PartialWriteSink : IOutputSink
+    {
+        public int Attempts { get; private set; }
+        public List<string> Delivered { get; } = new();
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            Attempts++;
+            Delivered.Add(logs[0].Question!.QuestionName!);
+            throw new IOException("Simulated partial write");
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class PermanentFailureSink : IOutputSink, IBatchRetryPolicy
+    {
+        public int Attempts { get; private set; }
+        public bool CanRetry(Exception exception) => false;
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            Attempts++;
+            throw new InvalidOperationException("Permanent failure");
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class DeadlineSink : IOutputSink, IBatchRetryPolicy
+    {
+        private int _attempts;
+        public int Attempts => Volatile.Read(ref _attempts);
+        public bool CanRetry(Exception exception) => true;
+        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            Interlocked.Increment(ref _attempts);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }
+        public void Dispose() { }
+    }
+
     public TestContext TestContext { get; set; }
 }
