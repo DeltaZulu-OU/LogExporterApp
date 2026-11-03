@@ -58,6 +58,7 @@ public sealed class HttpSinkTests
         Assert.IsTrue(retrySink.CanRetry(new HttpRequestException("Throttled",
             null, HttpStatusCode.TooManyRequests)));
         Assert.IsTrue(retrySink.CanRetry(new HttpRequestException("Disconnected")));
+        Assert.IsTrue(retrySink.CanRetry(new TaskCanceledException("Client timeout")));
         Assert.IsFalse(retrySink.CanRetry(new HttpRequestException("Bad request",
             null, HttpStatusCode.BadRequest)));
         Assert.IsFalse(retrySink.CanRetry(new InvalidOperationException("Serialization failure")));
