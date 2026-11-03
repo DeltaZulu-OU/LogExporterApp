@@ -65,19 +65,32 @@ namespace LogExporter
             Validator.ValidateObject(instance, ctx, validateAllProperties: true);
         }
 
-        private static void ValidateEnabledFeatures(AppConfig config)
+        private static void ValidateEnabledSinkBatching(SinkConfig sinks)
         {
-            foreach (var feature in new FeatureBase?[] {
-                config.Sinks.ConsoleSinkConfig, config.Sinks.FileSinkConfig,
-                config.Sinks.HttpSinkConfig, config.Sinks.SyslogSinkConfig })
+            foreach (var feature in new FeatureBase?[]
             {
-                if (feature?.Enabled is true && feature.Batching is not null)
+                sinks.ConsoleSinkConfig, sinks.FileSinkConfig,
+                sinks.HttpSinkConfig, sinks.SyslogSinkConfig
+            })
+            {
+                if (feature?.Enabled is not true || feature.Batching is null)
                 {
-                    ValidateObject(feature.Batching);
-                    if (feature.Batching.MaxRetryDelayMs < feature.Batching.InitialRetryDelayMs)
-                        throw new ValidationException("batching.maxRetryDelayMs must be >= initialRetryDelayMs.");
+                    continue;
+                }
+
+                ValidateObject(feature.Batching);
+
+                if (feature.Batching.MaxRetryDelayMs < feature.Batching.InitialRetryDelayMs)
+                {
+                    throw new ValidationException(
+                        "batching.maxRetryDelayMs must be >= initialRetryDelayMs.");
                 }
             }
+        }
+
+        private static void ValidateEnabledFeatures(AppConfig config)
+        {
+            ValidateEnabledSinkBatching(config.Sinks);
 
             if (config.Sinks.FileSinkConfig?.Enabled is true)
             {
