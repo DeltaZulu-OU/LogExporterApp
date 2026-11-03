@@ -67,6 +67,18 @@ namespace LogExporter
 
         private static void ValidateEnabledFeatures(AppConfig config)
         {
+            foreach (var feature in new FeatureBase?[] {
+                config.Sinks.ConsoleSinkConfig, config.Sinks.FileSinkConfig,
+                config.Sinks.HttpSinkConfig, config.Sinks.SyslogSinkConfig })
+            {
+                if (feature?.Enabled is true && feature.Batching is not null)
+                {
+                    ValidateObject(feature.Batching);
+                    if (feature.Batching.MaxRetryDelayMs < feature.Batching.InitialRetryDelayMs)
+                        throw new ValidationException("batching.maxRetryDelayMs must be >= initialRetryDelayMs.");
+                }
+            }
+
             if (config.Sinks.FileSinkConfig?.Enabled is true)
             {
                 ValidateObject(config.Sinks.FileSinkConfig);
@@ -102,8 +114,33 @@ namespace LogExporter
             }
         }
     }
+    public class BatchSettings
+    {
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("batchSize")]
+        public int BatchSize { get; set; } = 1000;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("batchDelayMs")]
+        public int BatchDelayMs { get; set; } = 25;
+
+        [Range(0, int.MaxValue)]
+        [JsonPropertyName("retryTimeLimitMs")]
+        public int RetryTimeLimitMs { get; set; } = 2000;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("initialRetryDelayMs")]
+        public int InitialRetryDelayMs { get; set; } = 50;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("maxRetryDelayMs")]
+        public int MaxRetryDelayMs { get; set; } = 500;
+    }
+
     public class FeatureBase
     {
+        [JsonPropertyName("batching")]
+        public BatchSettings? Batching { get; set; }
         [JsonPropertyName("enabled")]
         public bool Enabled { get; set; } = true;
     }
