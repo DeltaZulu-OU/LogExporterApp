@@ -85,10 +85,9 @@ namespace LogExporter.Sinks
         {
             ArgumentNullException.ThrowIfNull(sink);
             ArgumentNullException.ThrowIfNull(options);
-            options.Validate();
-
             try
             {
+                options.Validate();
                 lock (_sync)
                 {
                     ObjectDisposedException.ThrowIf(_disposed, this);
@@ -236,6 +235,7 @@ namespace LogExporter.Sinks
             private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
 
             private readonly IOutputSink _sink;
+            private readonly IBatchRetryPolicy? _retryPolicy;
             private readonly SinkBatchOptions _options;
             private long _totalDroppedEvents;
             private long _successfulEvents;
@@ -260,6 +260,7 @@ namespace LogExporter.Sinks
                 Action<string>? onLog)
             {
                 _sink = sink;
+                _retryPolicy = sink as IBatchRetryPolicy;
                 _options = options;
                 _onError = onError;
                 _onLog = onLog;
@@ -463,12 +464,27 @@ namespace LogExporter.Sinks
             {
                 var started = System.Diagnostics.Stopwatch.StartNew();
                 var delay = _options.InitialRetryDelay;
+                // Do not replay whole batches unless the target explicitly opts into replay.
+                // HTTP, append-only file, console and syslog may have partially committed work.
                 while (true)
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
+                    using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
+                    if (_retryPolicy is not null && _options.RetryTimeLimit > TimeSpan.Zero)
+                    {
+                        var remainingTime = _options.RetryTimeLimit - started.Elapsed;
+                        if (remainingTime <= TimeSpan.Zero)
+                        {
+                            RecordTerminalFailure(batch.Count);
+                            return;
+                        }
+
+                        attemptCts.CancelAfter(remainingTime);
+                    }
+
                     try
                     {
-                        await _sink.ExportAsync(batch, _cancellation.Token).ConfigureAwait(false);
+                        await _sink.ExportAsync(batch, attemptCts.Token).ConfigureAwait(false);
                         Interlocked.Add(ref _successfulEvents, batch.Count);
                         Interlocked.Increment(ref _successfulBatches);
                         return;
@@ -481,14 +497,15 @@ namespace LogExporter.Sinks
                     {
                         ReportError(ex);
                         var remaining = _options.RetryTimeLimit - started.Elapsed;
-                        if (remaining <= TimeSpan.Zero)
+                        if (_retryPolicy is null ||
+                            !_retryPolicy.CanRetry(ex) ||
+                            remaining <= TimeSpan.Zero)
                         {
-                            Interlocked.Add(ref _failedEvents, batch.Count);
-                            Interlocked.Increment(ref _failedBatches);
-                            ReportTerminalLoss(batch.Count);
+                            RecordTerminalFailure(batch.Count);
                             return;
                         }
-                        // Jitter reduces synchronized retries from multiple servers/sinks.
+
+                        // Retry only an explicitly replay-safe batch, without overtaking it.
                         var jitter = 0.75 + Random.Shared.NextDouble() * 0.5;
                         var wait = TimeSpan.FromMilliseconds(Math.Min(remaining.TotalMilliseconds,
                             delay.TotalMilliseconds * jitter));
@@ -498,6 +515,13 @@ namespace LogExporter.Sinks
                             delay.TotalMilliseconds * 2));
                     }
                 }
+            }
+
+            private void RecordTerminalFailure(int count)
+            {
+                Interlocked.Add(ref _failedEvents, count);
+                Interlocked.Increment(ref _failedBatches);
+                ReportTerminalLoss(count);
             }
 
             private void ReportTerminalLoss(int count)
