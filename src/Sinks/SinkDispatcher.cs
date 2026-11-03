@@ -391,7 +391,7 @@ namespace LogExporter.Sinks
                             batch.Add(entry);
                         }
 
-                        if (batch.Count < BULK_INSERT_COUNT &&
+                        if (batch.Count < _options.BatchSize &&
                             !_queue.Reader.Completion.IsCompleted)
                         {
                             await FillBatchUntilDelayAsync(batch).ConfigureAwait(false);
@@ -434,7 +434,7 @@ namespace LogExporter.Sinks
             {
                 var delayTask = Task.Delay(_options.BatchDelay, _cancellation.Token);
 
-                while (batch.Count < BULK_INSERT_COUNT &&
+                while (batch.Count < _options.BatchSize &&
                        !_queue.Reader.Completion.IsCompleted)
                 {
                     var waitToReadTask = _queue.Reader
@@ -451,7 +451,7 @@ namespace LogExporter.Sinks
                         break;
                     }
 
-                    while (batch.Count < BULK_INSERT_COUNT &&
+                    while (batch.Count < _options.BatchSize &&
                            _queue.Reader.TryRead(out var entry))
                     {
                         batch.Add(entry);
