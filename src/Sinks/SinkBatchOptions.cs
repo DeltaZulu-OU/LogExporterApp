@@ -15,17 +15,17 @@ namespace LogExporter.Sinks
         public void Validate()
         {
             if (QueueCapacity <= 0)
-                throw new ArgumentOutOfRangeException(null, QueueCapacity, $"{nameof(QueueCapacity)} must be positive.");
+                throw new InvalidOperationException($"{nameof(QueueCapacity)} must be positive.");
             if (BatchSize <= 0)
-                throw new ArgumentOutOfRangeException(null, BatchSize, $"{nameof(BatchSize)} must be positive.");
+                throw new InvalidOperationException($"{nameof(BatchSize)} must be positive.");
             if (BatchDelay <= TimeSpan.Zero)
-                throw new ArgumentOutOfRangeException(null, BatchDelay, $"{nameof(BatchDelay)} must be positive.");
+                throw new InvalidOperationException($"{nameof(BatchDelay)} must be positive.");
             if (RetryTimeLimit < TimeSpan.Zero)
-                throw new ArgumentOutOfRangeException(null, RetryTimeLimit, $"{nameof(RetryTimeLimit)} cannot be negative.");
+                throw new InvalidOperationException($"{nameof(RetryTimeLimit)} cannot be negative.");
             if (InitialRetryDelay <= TimeSpan.Zero)
-                throw new ArgumentOutOfRangeException(null, InitialRetryDelay, $"{nameof(InitialRetryDelay)} must be positive.");
+                throw new InvalidOperationException($"{nameof(InitialRetryDelay)} must be positive.");
             if (MaxRetryDelay < InitialRetryDelay)
-                throw new ArgumentOutOfRangeException(null, MaxRetryDelay, $"{nameof(MaxRetryDelay)} cannot be less than {nameof(InitialRetryDelay)}.");
+                throw new InvalidOperationException($"{nameof(MaxRetryDelay)} cannot be less than {nameof(InitialRetryDelay)}.");
         }
     }
 
