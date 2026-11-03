@@ -488,7 +488,7 @@ namespace LogExporter
             try
             {
                 _sinkDispatcher.Add(
-                    new HttpSink(config.Endpoint!, config.Headers),
+                    new HttpSink(config.Endpoint!, config.Headers, config.AllowBatchReplay),
                     BatchOptions(queueCapacity, config.Batching),
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
