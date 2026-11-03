@@ -213,6 +213,58 @@ public sealed class SinkDispatcherTests
         Assert.AreEqual(1L, dispatcher.GetCounters(typeof(DeadlineSink)).FailedEvents);
     }
 
+    [TestMethod]
+    public async Task QueueOverflowIsCountedExactlyAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var blocked = new BlockingSink();
+        dispatcher.Add(blocked, FastRetryOptions with { QueueCapacity = 1 });
+
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await blocked.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(3), CancellationToken.None);
+
+        Assert.AreEqual(2L, dispatcher.GetCounters(typeof(BlockingSink)).DroppedEvents);
+        blocked.Release.TrySetResult();
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+    }
+
+    [TestMethod]
+    public async Task CountersSurviveRemovingSinkAndRegisteringReplacementAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var first = new CountingSink(expectedCount: 1);
+        dispatcher.Add(first, FastRetryOptions);
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await first.ReachedExpectedCount.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        dispatcher.Remove(typeof(CountingSink));
+
+        using var second = new CountingSink(expectedCount: 1);
+        dispatcher.Add(second, FastRetryOptions);
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(2L, dispatcher.GetCounters(typeof(CountingSink)).SuccessfulEvents);
+    }
+
+    [TestMethod]
+    public void FailedRegistrationDisposesOwnedSink()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new DisposalTrackingSink();
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            dispatcher.Add(sink, new SinkBatchOptions { BatchSize = 0 }));
+        Assert.IsTrue(sink.WasDisposed);
+    }
+
+    private sealed class DisposalTrackingSink : IOutputSink
+    {
+        public bool WasDisposed { get; private set; }
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token) =>
+            Task.CompletedTask;
+        public void Dispose() => WasDisposed = true;
+    }
+
     private sealed class PartialWriteSink : IOutputSink
     {
         public int Attempts { get; private set; }
