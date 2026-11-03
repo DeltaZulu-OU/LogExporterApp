@@ -25,6 +25,32 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 - Drops new entries when the pipeline is full and periodically logs the number of dropped records.
 - Drains pending logs during shutdown.
 
+## Batch delivery and retry semantics
+
+Each sink has an independent bounded in-memory queue. Configurable `batching` settings
+include `batchSize`, `batchDelayMs`, `retryTimeLimitMs`, `initialRetryDelayMs`
+and `maxRetryDelayMs`. The retry budget applies to sinks that explicitly opt into
+whole-batch replay; it does not impose a universal timeout on other sink implementations.
+
+**Whole-batch replay is disabled for file, console and syslog output** because they
+can partially deliver a batch before an exception. Syslog retains its own
+transport-level recovery and is not retried a second time by the dispatcher.
+
+HTTP whole-batch replay is **disabled by default**. Set
+`sinks.http.allowBatchReplay: true` only if the receiving system tolerates
+duplicate DNS events or performs deduplication. When enabled, HTTP batch replay
+is attempted for connection failures, HTTP 408/429, and HTTP 5xx, within the
+configured retry budget. Invalid requests such as HTTP 400 are not retried.
+A lost acknowledgment after server-side commit may result in duplicate delivery.
+Use unique event identifiers and receiver-side deduplication when needed.
+
+Per-sink cumulative delivery counters are available through
+`SinkDispatcher.GetCounters(Type)`. Counters are in memory; they are not a
+durable audit log or a metrics endpoint. Queue overflow and retry exhaustion
+are reported, but process crashes, forced shutdown, and permanently unavailable
+destinations can still cause data loss. The system provides **best-effort,
+bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
+
 ## Configuration
 
 > Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
