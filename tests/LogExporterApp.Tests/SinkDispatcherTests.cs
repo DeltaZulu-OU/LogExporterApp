@@ -257,6 +257,48 @@ public sealed class SinkDispatcherTests
         Assert.IsTrue(sink.WasDisposed);
     }
 
+    [TestMethod]
+    public async Task CancellationDuringBackoffPreventsAnotherAttemptAsync()
+    {
+        var dispatcher = new SinkDispatcher();
+        using var sink = new RecoveringSink(failuresBeforeSuccess: int.MaxValue);
+        dispatcher.Add(sink, FastRetryOptions with
+        {
+            InitialRetryDelay = TimeSpan.FromSeconds(1),
+            MaxRetryDelay = TimeSpan.FromSeconds(1),
+            RetryTimeLimit = TimeSpan.FromSeconds(5)
+        });
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await sink.WaitForAttemptAsync(1).WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.IsFalse(await dispatcher.DrainAsync(TimeSpan.FromMilliseconds(50)));
+        dispatcher.Dispose();
+        Assert.AreEqual(1, sink.Attempts);
+    }
+
+    [TestMethod]
+    public async Task ConfiguredBatchLimitIsRespectedAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new BatchSizeRecordingSink();
+        dispatcher.Add(sink, FastRetryOptions with { BatchSize = 2 });
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(5), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        CollectionAssert.AreEqual(new[] { 2, 2, 1 }, sink.BatchSizes);
+    }
+
+    private sealed class BatchSizeRecordingSink : IOutputSink
+    {
+        public List<int> BatchSizes { get; } = new();
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            BatchSizes.Add(logs.Count);
+            return Task.CompletedTask;
+        }
+        public void Dispose() { }
+    }
+
     private sealed class DisposalTrackingSink : IOutputSink
     {
         public bool WasDisposed { get; private set; }
