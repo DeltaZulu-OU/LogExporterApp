@@ -30,9 +30,6 @@ namespace LogExporter.Sinks
     {
         #region variables
 
-        private const int BULK_INSERT_COUNT = 1000;
-        private static readonly TimeSpan BatchDelay = TimeSpan.FromMilliseconds(25);
-
         private readonly Lock _sync = new Lock();
         private readonly Dictionary<Type, SinkWorker> _workers =
             new Dictionary<Type, SinkWorker>();
@@ -77,7 +74,18 @@ namespace LogExporter.Sinks
             Action<Exception>? onError = null,
             Action<string>? onLog = null)
         {
+            Add(sink, new SinkBatchOptions { QueueCapacity = queueCapacity }, onError, onLog);
+        }
+
+        public void Add(
+            IOutputSink sink,
+            SinkBatchOptions options,
+            Action<Exception>? onError = null,
+            Action<string>? onLog = null)
+        {
             ArgumentNullException.ThrowIfNull(sink);
+            ArgumentNullException.ThrowIfNull(options);
+            options.Validate();
 
             try
             {
@@ -93,7 +101,7 @@ namespace LogExporter.Sinks
 
                     _workers.Add(
                         sink.GetType(),
-                        new SinkWorker(sink, queueCapacity, onError, onLog));
+                        new SinkWorker(sink, options, onError, onLog));
                     RefreshSnapshotLocked();
                 }
             }
@@ -118,6 +126,17 @@ namespace LogExporter.Sinks
             }
 
             worker?.Dispose();
+        }
+
+        public SinkDeliveryCounters GetCounters(Type sinkType)
+        {
+            ArgumentNullException.ThrowIfNull(sinkType);
+            lock (_sync)
+            {
+                if (!_workers.TryGetValue(sinkType, out var worker))
+                    throw new KeyNotFoundException($"No sink registered for {sinkType.Name}.");
+                return worker.Counters;
+            }
         }
 
         public bool Any()
@@ -217,6 +236,13 @@ namespace LogExporter.Sinks
             private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
 
             private readonly IOutputSink _sink;
+            private readonly SinkBatchOptions _options;
+            private long _totalDroppedEvents;
+            private long _successfulEvents;
+            private long _failedEvents;
+            private long _successfulBatches;
+            private long _retriedAttempts;
+            private long _failedBatches;
             private readonly Channel<LogEntry> _queue;
             private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
             private readonly Action<Exception>? _onError;
@@ -229,16 +255,17 @@ namespace LogExporter.Sinks
 
             public SinkWorker(
                 IOutputSink sink,
-                int queueCapacity,
+                SinkBatchOptions options,
                 Action<Exception>? onError,
                 Action<string>? onLog)
             {
                 _sink = sink;
+                _options = options;
                 _onError = onError;
                 _onLog = onLog;
 
                 _queue = Channel.CreateBounded<LogEntry>(
-                    new BoundedChannelOptions(Math.Max(1, queueCapacity))
+                    new BoundedChannelOptions(options.QueueCapacity)
                     {
                         SingleReader = true,
                         SingleWriter = false,
@@ -250,6 +277,14 @@ namespace LogExporter.Sinks
             }
 
             public Task Completion { get; }
+
+            public SinkDeliveryCounters Counters => new(
+                Interlocked.Read(ref _totalDroppedEvents),
+                Interlocked.Read(ref _successfulEvents),
+                Interlocked.Read(ref _failedEvents),
+                Interlocked.Read(ref _successfulBatches),
+                Interlocked.Read(ref _retriedAttempts),
+                Interlocked.Read(ref _failedBatches));
 
             public void Enqueue(IReadOnlyList<LogEntry> logs)
             {
@@ -342,7 +377,7 @@ namespace LogExporter.Sinks
 
             private async Task RunAsync()
             {
-                var batch = new List<LogEntry>(BULK_INSERT_COUNT);
+                var batch = new List<LogEntry>(_options.BatchSize);
 
                 try
                 {
@@ -350,7 +385,7 @@ namespace LogExporter.Sinks
                         .WaitToReadAsync(_cancellation.Token)
                         .ConfigureAwait(false))
                     {
-                        while (batch.Count < BULK_INSERT_COUNT &&
+                        while (batch.Count < _options.BatchSize &&
                                _queue.Reader.TryRead(out var entry))
                         {
                             batch.Add(entry);
@@ -369,8 +404,7 @@ namespace LogExporter.Sinks
 
                         try
                         {
-                            await _sink.ExportAsync(batch, _cancellation.Token)
-                                .ConfigureAwait(false);
+                            await ExportWithRetryAsync(batch).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                         {
@@ -398,7 +432,7 @@ namespace LogExporter.Sinks
 
             private async Task FillBatchUntilDelayAsync(List<LogEntry> batch)
             {
-                var delayTask = Task.Delay(BatchDelay, _cancellation.Token);
+                var delayTask = Task.Delay(_options.BatchDelay, _cancellation.Token);
 
                 while (batch.Count < BULK_INSERT_COUNT &&
                        !_queue.Reader.Completion.IsCompleted)
@@ -425,8 +459,59 @@ namespace LogExporter.Sinks
                 }
             }
 
+            private async Task ExportWithRetryAsync(List<LogEntry> batch)
+            {
+                var started = System.Diagnostics.Stopwatch.StartNew();
+                var delay = _options.InitialRetryDelay;
+                while (true)
+                {
+                    _cancellation.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        await _sink.ExportAsync(batch, _cancellation.Token).ConfigureAwait(false);
+                        Interlocked.Add(ref _successfulEvents, batch.Count);
+                        Interlocked.Increment(ref _successfulBatches);
+                        return;
+                    }
+                    catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        ReportError(ex);
+                        var remaining = _options.RetryTimeLimit - started.Elapsed;
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            Interlocked.Add(ref _failedEvents, batch.Count);
+                            Interlocked.Increment(ref _failedBatches);
+                            ReportTerminalLoss(batch.Count);
+                            return;
+                        }
+                        // Jitter reduces synchronized retries from multiple servers/sinks.
+                        var jitter = 0.75 + Random.Shared.NextDouble() * 0.5;
+                        var wait = TimeSpan.FromMilliseconds(Math.Min(remaining.TotalMilliseconds,
+                            delay.TotalMilliseconds * jitter));
+                        Interlocked.Increment(ref _retriedAttempts);
+                        await Task.Delay(wait, _cancellation.Token).ConfigureAwait(false);
+                        delay = TimeSpan.FromMilliseconds(Math.Min(_options.MaxRetryDelay.TotalMilliseconds,
+                            delay.TotalMilliseconds * 2));
+                    }
+                }
+            }
+
+            private void ReportTerminalLoss(int count)
+            {
+                try
+                {
+                    _onLog?.Invoke($"{_sink.GetType().Name} export failed after retry budget; permanently lost {count} log entries.");
+                }
+                catch { /* Reporting must not terminate worker. */ }
+            }
+
             private void OnDropped()
             {
+                Interlocked.Increment(ref _totalDroppedEvents);
                 Interlocked.Increment(ref _droppedEvents);
 
                 var nowTicks = DateTime.UtcNow.Ticks;
