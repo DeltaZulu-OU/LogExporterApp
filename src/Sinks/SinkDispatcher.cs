@@ -505,6 +505,7 @@ namespace LogExporter.Sinks
                     try
                     {
                         await _sink.ExportAsync(batch, attemptCts.Token).ConfigureAwait(false);
+                        attemptCts.Token.ThrowIfCancellationRequested();
                         Interlocked.Add(ref _successfulEvents, batch.Count);
                         Interlocked.Increment(ref _successfulBatches);
                         return;
@@ -512,6 +513,12 @@ namespace LogExporter.Sinks
                     catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                     {
                         throw;
+                    }
+                    catch (OperationCanceledException) when (attemptCts.IsCancellationRequested)
+                    {
+                        // An attempt timed out: no further attempts are permitted after the deadline.
+                        RecordTerminalFailure(batch.Count);
+                        return;
                     }
                     catch (Exception ex)
                     {
