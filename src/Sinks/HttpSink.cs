@@ -122,7 +122,7 @@ namespace LogExporter.Sinks
                 return status == 408 || status == 429 || status >= 500;
             }
 
-            return exception is System.IO.IOException or TimeoutException;
+            return exception is System.IO.IOException or TimeoutException or TaskCanceledException;
         }
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
