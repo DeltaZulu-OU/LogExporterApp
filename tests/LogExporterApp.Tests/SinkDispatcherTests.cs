@@ -174,7 +174,7 @@ public sealed class SinkDispatcherTests
     {
         using var dispatcher = new SinkDispatcher();
         using var sink = new PartialWriteSink();
-        dispatcher.Add(sink, FastRetryOptions);
+        dispatcher.Add(sink, FastRetryOptions with { BatchSize = 2 });
         await dispatcher.DispatchAsync(new[] {
             TestFixtures.CreateLogEntry("one.example"),
             TestFixtures.CreateLogEntry("two.example")
