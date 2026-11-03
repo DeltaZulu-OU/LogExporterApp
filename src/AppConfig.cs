@@ -204,6 +204,9 @@ namespace LogExporter
 
         public class HttpSink : FeatureBase
         {
+            [JsonPropertyName("allowBatchReplay")]
+            public bool AllowBatchReplay { get; set; }
+
 
             [Required(ErrorMessage = "http.endpoint is required when HTTP logging is enabled.")]
             [Url]
