@@ -202,7 +202,7 @@ internal sealed class ThrowingTestProcessor : IPipelineProcessor
     }
 }
 
-internal sealed class RecoveringSink : IOutputSink
+internal sealed class RecoveringSink : IOutputSink, IBatchRetryPolicy
 {
     private readonly int _failuresBeforeSuccess;
     private readonly object _sync = new();
@@ -214,6 +214,8 @@ internal sealed class RecoveringSink : IOutputSink
     {
         _failuresBeforeSuccess = failuresBeforeSuccess;
     }
+
+    public bool CanRetry(Exception exception) => exception is InvalidOperationException;
 
     internal int Attempts => Volatile.Read(ref _attempts);
     internal int Successes => Volatile.Read(ref _successes);
