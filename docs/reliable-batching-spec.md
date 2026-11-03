@@ -64,3 +64,35 @@ No merge until tests establish retry correctness, nonblocking DNS request handli
 ## Reference
 
 Serilog batching source: https://github.com/serilog/serilog/blob/dev/src/Serilog/Core/Sinks/Batching/BatchingSink.cs
+
+## Initial implementation (2026-11-04)
+
+Implemented on this branch: per-sink `SinkBatchOptions`, configurable `batching` blocks, bounded exponential retry with jitter, retention of the current batch during retry, per-sink delivery counters, and terminal loss notices.
+
+Example sink configuration:
+
+```json
+{
+  "sinks": {
+    "maxQueueSize": 100000,
+    "http": {
+      "enabled": true,
+      "endpoint": "https://example.com/logs",
+      "batching": {
+        "batchSize": 1000,
+        "batchDelayMs": 25,
+        "retryTimeLimitMs": 2000,
+        "initialRetryDelayMs": 50,
+        "maxRetryDelayMs": 500
+      }
+    }
+  },
+  "pipeline": {}
+}
+```
+
+The dispatcher exposes a point-in-time `GetCounters(typeof(HttpSink))` snapshot for diagnostics. These are in-memory counters, not yet exported through a monitoring endpoint. Terminal loss is separately logged, even when transient error logging is rate-limited.
+
+Important limits: the retry budget bounds delays between cooperative calls; it cannot interrupt a sink implementation that indefinitely ignores its cancellation token. No disk spool is provided. Successful remote writes followed by lost acknowledgments can result in duplicates on retry. A 2-second retry budget is a deliberately conservative default and is not a guarantee against prolonged outages.
+
+**Validation status:** source commits and tests are present, but they have not been compiled or run in this environment. Integration testing, fault injection and performance benchmarks remain required before merge. This stage does not claim all twelve acceptance tests have been satisfied.
