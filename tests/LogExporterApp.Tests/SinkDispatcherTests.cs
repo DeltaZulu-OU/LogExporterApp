@@ -135,7 +135,7 @@ public sealed class SinkDispatcherTests
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
         await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
 
-        Assert.IsGreaterThanOrEqualTo(1, errors);
+        Assert.IsTrue(errors >= 1);
         Assert.AreEqual(1, terminalMessages);
         var counters = dispatcher.GetCounters(typeof(RecoveringSink));
         Assert.AreEqual(1L, counters.FailedEvents);
