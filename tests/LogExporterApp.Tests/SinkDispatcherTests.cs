@@ -165,7 +165,7 @@ public sealed class SinkDispatcherTests
     {
         using var dispatcher = new SinkDispatcher();
         using var sink = new CountingSink(expectedCount: 1);
-        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
             dispatcher.Add(sink, new SinkBatchOptions { BatchSize = 0 }));
     }
 
