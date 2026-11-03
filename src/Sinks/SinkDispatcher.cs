@@ -34,6 +34,7 @@ namespace LogExporter.Sinks
         private readonly Dictionary<Type, SinkWorker> _workers =
             new Dictionary<Type, SinkWorker>();
         private SinkWorker[] _workerSnapshot = Array.Empty<SinkWorker>();
+        private readonly Dictionary<Type, SinkDeliveryCounters> _retiredCounters = new();
 
         private bool _disposed;
 
@@ -124,17 +125,36 @@ namespace LogExporter.Sinks
                 RefreshSnapshotLocked();
             }
 
-            worker?.Dispose();
+            if (worker is not null)
+            {
+                worker.Dispose();
+                lock (_sync)
+                {
+                    _retiredCounters.TryGetValue(type, out var earlier);
+                    _retiredCounters[type] = AddCounters(earlier, worker.Counters);
+                }
+            }
         }
+
+        private static SinkDeliveryCounters AddCounters(SinkDeliveryCounters a, SinkDeliveryCounters b) => new(
+            a.DroppedEvents + b.DroppedEvents,
+            a.SuccessfulEvents + b.SuccessfulEvents,
+            a.FailedEvents + b.FailedEvents,
+            a.SuccessfulBatches + b.SuccessfulBatches,
+            a.RetriedAttempts + b.RetriedAttempts,
+            a.FailedBatches + b.FailedBatches);
 
         public SinkDeliveryCounters GetCounters(Type sinkType)
         {
             ArgumentNullException.ThrowIfNull(sinkType);
             lock (_sync)
             {
-                if (!_workers.TryGetValue(sinkType, out var worker))
-                    throw new KeyNotFoundException($"No sink registered for {sinkType.Name}.");
-                return worker.Counters;
+                var hasRetired = _retiredCounters.TryGetValue(sinkType, out var retired);
+                if (_workers.TryGetValue(sinkType, out var worker))
+                    return AddCounters(retired, worker.Counters);
+                if (hasRetired)
+                    return retired;
+                throw new KeyNotFoundException($"No sink registered for {sinkType.Name}.");
             }
         }
 
