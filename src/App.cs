@@ -399,6 +399,16 @@ namespace LogExporter
         /// Configuration validation is transactional, but runtime sink creation is intentionally
         /// best-effort; environmental failures can therefore leave fewer, or no, active sinks.
         /// </remarks>
+        private static SinkBatchOptions BatchOptions(int queueCapacity, BatchSettings? settings) => new()
+        {
+            QueueCapacity = queueCapacity,
+            BatchSize = settings?.BatchSize ?? 1000,
+            BatchDelay = TimeSpan.FromMilliseconds(settings?.BatchDelayMs ?? 25),
+            RetryTimeLimit = TimeSpan.FromMilliseconds(settings?.RetryTimeLimitMs ?? 2000),
+            InitialRetryDelay = TimeSpan.FromMilliseconds(settings?.InitialRetryDelayMs ?? 50),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(settings?.MaxRetryDelayMs ?? 500)
+        };
+
         private void ConfigureSinks(SinkConfig sinks)
         {
             ConfigureConsoleSink(sinks.ConsoleSinkConfig, sinks.MaxQueueSize);
@@ -419,7 +429,7 @@ namespace LogExporter
             {
                 _sinkDispatcher.Add(
                     new ConsoleSink(),
-                    queueCapacity,
+                    BatchOptions(queueCapacity, config.Batching),
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
             }
@@ -441,7 +451,7 @@ namespace LogExporter
             {
                 _sinkDispatcher.Add(
                     new FileSink(config.Path!),
-                    queueCapacity,
+                    BatchOptions(queueCapacity, config.Batching),
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
             }
@@ -479,7 +489,7 @@ namespace LogExporter
             {
                 _sinkDispatcher.Add(
                     new HttpSink(config.Endpoint!, config.Headers),
-                    queueCapacity,
+                    BatchOptions(queueCapacity, config.Batching),
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
             }
@@ -511,7 +521,7 @@ namespace LogExporter
                                    config.Protocol,
                                    _dnsServerReady.Task,
                                    message => _dnsServer?.WriteLog(message)),
-                    queueCapacity,
+                    BatchOptions(queueCapacity, config.Batching),
                     ex => _dnsServer?.WriteLog(ex),
                     message => _dnsServer?.WriteLog(message));
             }
