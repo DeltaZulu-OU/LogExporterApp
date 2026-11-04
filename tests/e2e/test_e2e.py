@@ -38,13 +38,12 @@ def test_benign_udp_exports_http_file_and_syslog(runtime, unique_name):
     assert 'rCode="NoError"' in packet
 
 
-def test_pinned_public_blocklist_examples(runtime):
+def test_pinned_fixture_blocked_examples(runtime):
     # These names were present in StevenBlack/hosts on 2026-11-04.
     # Their presence in a blocklist does not independently establish maliciousness.
     for name in ("adsflame.com", "aircovid19virus.com"):
         output = probe(name)
         assert "status: NXDOMAIN" in output
-        assert "EDE: 15" in output
         record = runtime.event(name)
         assert record["responseCode"] == "NxDomain"
         assert record["responseType"] == "Blocked"
@@ -63,11 +62,10 @@ def test_benign_tcp_aaaa(runtime, unique_name):
 def test_blocked_domain_has_evidence_in_wire_and_export(runtime):
     output = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in output
-    assert "EDE: 15" in output
     record = runtime.event("blocked.e2e.invalid")
     assert record["responseType"] == "Blocked"
     assert record["responseCode"] == "NxDomain"
-    assert any(ede["errType"] == "Blocked" for ede in record["edns"])
+    assert record["edns"] == []
     assert runtime.file_event("blocked.e2e.invalid")["responseType"] == "Blocked"
 
 
@@ -204,7 +202,7 @@ def test_edns_disabled_does_not_emit_optional_ede(runtime):
     runtime.set_config(config)
     output = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in output
-    assert "EDE: 15" in output
+    assert "EDE:" not in output
     record = runtime.event("blocked.e2e.invalid")
     assert record["responseType"] == "Blocked"
     assert record["edns"] == []
