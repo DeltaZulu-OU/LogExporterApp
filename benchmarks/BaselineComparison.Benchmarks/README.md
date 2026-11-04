@@ -18,7 +18,8 @@ delivery counters. Each batch must have at most 1,000 entries.
 |---|---:|---|---|
 | single-burst | 1 | One 100,000-event call | Enqueue/worker overhead |
 | chunked | 1 | 100 calls of 1,000 events | Incremental producer handoff |
-| two-sinks | 2 | 100 calls of 1,000 events | Fan-out overhead |
+
+The comparison intentionally measures only one sink. Multi-sink fan-out and sink-isolation behavior are outside its performance scope.
 
 The benchmark deliberately uses a counting no-op sink and does not serialize
 DNS records, perform network I/O, write files, or inject failures. It cannot
