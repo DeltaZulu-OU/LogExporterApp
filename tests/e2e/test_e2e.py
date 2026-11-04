@@ -10,7 +10,9 @@ from conftest import API, event_names, matches, probe, wait_until
 
 
 def assert_common(record, name, qtype, protocol="Udp"):
-    assert record["question"] == {"questionName": name, "questionType": qtype, "questionClass": "IN"}
+    assert record["question"]["questionName"] == name
+    assert record["question"]["questionType"] == qtype
+    assert record["question"]["questionClass"] == "IN"
     assert record["responseCode"] == "NoError"
     assert record["protocol"] == protocol
     assert record["meta"]["tags"] == ["tenant:ci"]
@@ -22,10 +24,12 @@ def assert_common(record, name, qtype, protocol="Udp"):
 
 def test_benign_udp_exports_http_file_and_syslog(runtime, unique_name):
     output = probe(unique_name)
-    assert "status: NOERROR" in output and "192.0.2.10" in output
+    assert "status: NOERROR" in output
+    assert "192.0.2.10" in output
     http = runtime.event(unique_name)
     assert_common(http, unique_name, "A")
-    assert http["responseType"] != "Blocked" and http["edns"] == []
+    assert http["responseType"] != "Blocked"
+    assert http["edns"] == []
     assert any(a["recordData"] == "192.0.2.10" for a in http["answers"])
     assert_common(runtime.file_event(unique_name), unique_name, "A")
     packet = wait_until(lambda: next((line for line in runtime.collector()["syslog_udp"]
@@ -39,7 +43,8 @@ def test_pinned_public_blocklist_examples(runtime):
     # Their presence in a blocklist does not independently establish maliciousness.
     for name in ("adsflame.com", "aircovid19virus.com"):
         output = probe(name)
-        assert "status: NXDOMAIN" in output and "EDE: 15" in output
+        assert "status: NXDOMAIN" in output
+        assert "EDE: 15" in output
         record = runtime.event(name)
         assert record["responseCode"] == "NxDomain"
         assert record["responseType"] == "Blocked"
@@ -48,7 +53,8 @@ def test_pinned_public_blocklist_examples(runtime):
 
 def test_benign_tcp_aaaa(runtime, unique_name):
     output = probe(unique_name, qtype="AAAA", tcp=True)
-    assert "status: NOERROR" in output and "2001:db8::10" in output
+    assert "status: NOERROR" in output
+    assert "2001:db8::10" in output
     record = runtime.event(unique_name, qtype="AAAA")
     assert_common(record, unique_name, "AAAA", "Tcp")
     assert any(a["recordData"] == "2001:db8::10" for a in record["answers"])
@@ -56,7 +62,8 @@ def test_benign_tcp_aaaa(runtime, unique_name):
 
 def test_blocked_domain_has_evidence_in_wire_and_export(runtime):
     output = probe("blocked.e2e.invalid")
-    assert "status: NXDOMAIN" in output and "EDE: 15" in output
+    assert "status: NXDOMAIN" in output
+    assert "EDE: 15" in output
     record = runtime.event("blocked.e2e.invalid")
     assert record["responseType"] == "Blocked"
     assert record["responseCode"] == "NxDomain"
@@ -66,9 +73,11 @@ def test_blocked_domain_has_evidence_in_wire_and_export(runtime):
 
 def test_blocked_without_edns_is_still_exported(runtime):
     output = probe("noedns.e2e.invalid", edns=False)
-    assert "status: NXDOMAIN" in output and "EDE:" not in output
+    assert "status: NXDOMAIN" in output
+    assert "EDE:" not in output
     record = runtime.event("noedns.e2e.invalid")
-    assert record["responseType"] == "Blocked" and record["edns"] == []
+    assert record["responseType"] == "Blocked"
+    assert record["edns"] == []
 
 
 def test_http_ndjson_contract(runtime, unique_name):
@@ -80,7 +89,8 @@ def test_http_ndjson_contract(runtime, unique_name):
     assert matched
     assert all(packet["content_type"].startswith("application/x-ndjson") for packet in matched)
     records = [json.loads(line) for packet in matched for line in packet["body"].splitlines() if line]
-    assert all(isinstance(r.get("hostname"), str) and r["hostname"] for r in records)
+    assert all(isinstance(r.get("hostname"), str) for r in records)
+    assert all(r["hostname"] for r in records)
 
 
 def test_console_ndjson(runtime, unique_name):
@@ -114,8 +124,10 @@ def test_batch_size_is_bounded(runtime):
         assert "status: NOERROR" in probe(name)
     wait_until(lambda: all(any(matches(event_names(runtime.collector()), name) for name in names)
                            for name in names), "all bounded-batch events", timeout=25)
-    assert all(1 <= len([line for line in packet["body"].splitlines() if line.strip()]) <= 2
-               for packet in runtime.collector()["http"])
+    batch_sizes = [len([line for line in packet["body"].splitlines() if line.strip()])
+                   for packet in runtime.collector()["http"]]
+    assert all(size >= 1 for size in batch_sizes)
+    assert all(size <= 2 for size in batch_sizes)
 
 
 def test_disabling_http_does_not_disable_file(runtime, unique_name):
@@ -136,7 +148,8 @@ def test_http_503_retries_only_when_enabled(runtime, unique_name):
     runtime.event(unique_name)
     attempts = [a for a in runtime.collector()["attempts"] if unique_name in a["body"]]
     assert len(attempts) >= 2
-    assert attempts[0]["status"] == 503 and attempts[1]["status"] == 200
+    assert attempts[0]["status"] == 503
+    assert attempts[1]["status"] == 200
     assert runtime.file_event(unique_name)["responseCode"] == "NoError"
 
 
@@ -207,7 +220,7 @@ def test_invalid_config_preserves_active_exporter(runtime, unique_name):
         payload = response.json()
     except requests.exceptions.JSONDecodeError:
         payload = {}
-    assert response.status_code >= 400 or payload.get("status") != "ok", payload
+    assert payload.get("status") != "ok", payload
     assert "status: NOERROR" in probe(unique_name)
     assert_common(runtime.event(unique_name), unique_name, "A")
 
