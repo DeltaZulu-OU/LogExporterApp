@@ -469,23 +469,25 @@ namespace LogExporter.Sinks
                 }
             }
 
+            private static void CancelCancellationSource(object? state)
+            {
+                try
+                {
+                    ((CancellationTokenSource)state!).Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A queued timer callback may outlive disposal.
+                }
+            }
+
             private async Task FillBatchUntilDelayAsync(List<LogEntry> batch)
             {
                 // One cancelable availability wait at a time. The same deadline spans
                 // the whole partial batch rather than restarting after each event.
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
                 using var flushTimer = _timeProvider.CreateTimer(
-                    static state =>
-                    {
-                        try
-                        {
-                            ((CancellationTokenSource)state!).Cancel();
-                        }
-                        catch (ObjectDisposedException)
-                        {
-                            // A queued timer callback may outlive disposal.
-                        }
-                    },
+                    CancelCancellationSource,
                     deadline, _options.BatchDelay, Timeout.InfiniteTimeSpan);
 
                 try
@@ -518,17 +520,7 @@ namespace LogExporter.Sinks
                     _cancellation.Token.ThrowIfCancellationRequested();
                     using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
                     using var attemptTimer = _timeProvider.CreateTimer(
-                        static state =>
-                    {
-                        try
-                        {
-                            ((CancellationTokenSource)state!).Cancel();
-                        }
-                        catch (ObjectDisposedException)
-                        {
-                            // A queued timer callback may outlive disposal.
-                        }
-                    },
+                        CancelCancellationSource,
                         attemptCts, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                     if (_replayEnabled && _options.RetryTimeLimit > TimeSpan.Zero)
                     {
