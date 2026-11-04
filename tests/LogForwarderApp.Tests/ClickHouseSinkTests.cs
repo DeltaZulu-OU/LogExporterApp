@@ -14,7 +14,7 @@ public sealed class ClickHouseSinkTests
         using var sink = new ClickHouseSink("Host=localhost;Port=8123;Database=dns",
             "dns", "events", recording);
 
-        await sink.ExportAsync([
+        await sink.ForwardAsync([
             TestFixtures.CreateLogEntry("first.example"),
             TestFixtures.CreateLogEntry("second.example")
         ], TestContext.CancellationToken);
@@ -37,7 +37,7 @@ public sealed class ClickHouseSinkTests
             "dns", "events", recording);
 
         var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-            sink.ExportAsync([TestFixtures.CreateLogEntry("failure.example")],
+            sink.ForwardAsync([TestFixtures.CreateLogEntry("failure.example")],
                 TestContext.CancellationToken));
         Assert.AreEqual("Insert failed", exception.Message);
     }
@@ -49,11 +49,11 @@ public sealed class ClickHouseSinkTests
         using var sink = new ClickHouseSink("Host=localhost;Port=8123",
             "dns", "events", recording);
 
-        await sink.ExportAsync([], TestContext.CancellationToken);
+        await sink.ForwardAsync([], TestContext.CancellationToken);
         using var canceled = new CancellationTokenSource();
         await canceled.CancelAsync();
         await Assert.ThrowsExactlyAsync<OperationCanceledException>(() =>
-            sink.ExportAsync([TestFixtures.CreateLogEntry("canceled.example")],
+            sink.ForwardAsync([TestFixtures.CreateLogEntry("canceled.example")],
                 canceled.Token));
         Assert.AreEqual(0, recording.Batches);
     }
@@ -67,7 +67,7 @@ public sealed class ClickHouseSinkTests
         using var sink = new ClickHouseSink("Host=localhost;Port=8123",
             "dns", "events", recording);
 
-        await sink.ExportAsync([record], TestContext.CancellationToken);
+        await sink.ForwardAsync([record], TestContext.CancellationToken);
 
         Assert.IsNotNull(recording.LastBatch);
         var evt = recording.LastBatch[0];
@@ -93,9 +93,9 @@ public sealed class ClickHouseSinkTests
             "dns", "events", recording);
 
         await Assert.ThrowsExactlyAsync<ArgumentNullException>(() =>
-            sink.ExportAsync(null!, TestContext.CancellationToken));
+            sink.ForwardAsync(null!, TestContext.CancellationToken));
         await Assert.ThrowsExactlyAsync<ArgumentNullException>(() =>
-            sink.ExportAsync([null!], TestContext.CancellationToken));
+            sink.ForwardAsync([null!], TestContext.CancellationToken));
         Assert.AreEqual(0, recording.Batches);
     }
 
@@ -126,7 +126,7 @@ public sealed class ClickHouseSinkTests
 
         Assert.AreEqual(0, recording.DisposeCalls);
         await Assert.ThrowsExactlyAsync<ObjectDisposedException>(() =>
-            sink.ExportAsync([TestFixtures.CreateLogEntry("after-disposal.example")],
+            sink.ForwardAsync([TestFixtures.CreateLogEntry("after-disposal.example")],
                 TestContext.CancellationToken));
         Assert.AreEqual(0, recording.Batches);
     }
@@ -141,7 +141,7 @@ public sealed class ClickHouseSinkTests
             "dns", "events", recording);
         using var cancellation = new CancellationTokenSource();
 
-        var export = sink.ExportAsync([TestFixtures.CreateLogEntry("inflight.example")],
+        var export = sink.ForwardAsync([TestFixtures.CreateLogEntry("inflight.example")],
             cancellation.Token);
         Assert.AreEqual(1, recording.Batches);
         await cancellation.CancelAsync();

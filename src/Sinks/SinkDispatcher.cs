@@ -443,7 +443,7 @@ namespace LogForwarder.Sinks
 
                         try
                         {
-                            await ExportWithRetryAsync(batch).ConfigureAwait(false);
+                            await ForwardWithRetryAsync(batch).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
                         {
@@ -509,7 +509,7 @@ namespace LogForwarder.Sinks
                 }
             }
 
-            private async Task ExportWithRetryAsync(List<LogEntry> batch)
+            private async Task ForwardWithRetryAsync(List<LogEntry> batch)
             {
                 var started = _timeProvider.GetTimestamp();
                 var delay = _options.InitialRetryDelay;
@@ -529,7 +529,7 @@ namespace LogForwarder.Sinks
 
                     try
                     {
-                        await _sink.ExportAsync(batch, attemptCts.Token).ConfigureAwait(false);
+                        await _sink.ForwardAsync(batch, attemptCts.Token).ConfigureAwait(false);
                         // A successful return is an acknowledgment. A deadline expiring
                         // immediately afterward cannot retroactively invalidate it.
                         Interlocked.Add(ref _successfulEvents, batch.Count);

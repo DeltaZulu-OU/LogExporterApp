@@ -64,7 +64,7 @@ public sealed class SyslogSinkTests
                 return Task.FromResult(System.Net.IPAddress.Loopback);
             });
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [TestFixtures.CreateLogEntry("resolution-retry.example")],
             CancellationToken.None);
 
@@ -86,7 +86,7 @@ public sealed class SyslogSinkTests
             _ => transport,
             _ => TimeSpan.Zero);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [
                 TestFixtures.CreateLogEntry("one.example"),
                 TestFixtures.CreateLogEntry("two.example"),
@@ -122,7 +122,7 @@ public sealed class SyslogSinkTests
             _ => transport,
             _ => TimeSpan.Zero);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [
                 TestFixtures.CreateLogEntry("oversized.example"),
                 TestFixtures.CreateLogEntry("next.example")
@@ -157,7 +157,7 @@ public sealed class SyslogSinkTests
             _ => transport,
             _ => TimeSpan.FromMinutes(1));
 
-        var export = sink.ExportAsync(
+        var export = sink.ForwardAsync(
             [TestFixtures.CreateLogEntry("cancel.example")],
             cts.Token);
 
@@ -187,7 +187,7 @@ public sealed class SyslogSinkTests
             topLevelDomainRule = new { name = "com", type = "Normal", labelCount = 1, division = "ICANN" }
         };
 
-        await sink.ExportAsync([entry], CancellationToken.None);
+        await sink.ForwardAsync([entry], CancellationToken.None);
 
         Assert.HasCount(1, transport.Events);
         var properties = transport.Events[0].Properties;

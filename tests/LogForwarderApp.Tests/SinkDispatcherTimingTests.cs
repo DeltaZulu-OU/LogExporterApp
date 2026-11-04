@@ -86,7 +86,7 @@ public sealed class SinkDispatcherTimingTests
 
         public bool CanRetry(Exception exception) => true;
 
-        public async Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             Started.TrySetResult();

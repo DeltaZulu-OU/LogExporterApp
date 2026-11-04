@@ -240,7 +240,7 @@ internal sealed class RecoveringSink : IOutputSink, IBatchRetryPolicy
         }
     }
 
-    public Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         var attempt = Interlocked.Increment(ref _attempts);
 
@@ -284,7 +284,7 @@ internal sealed class CountingSink : IOutputSink
 
     internal int Count => Volatile.Read(ref _count);
 
-    public Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         var count = Interlocked.Add(ref _count, logs.Count);
 
@@ -313,7 +313,7 @@ internal sealed class BlockingSink : IOutputSink
 
     internal int Count => Volatile.Read(ref _count);
 
-    public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         Interlocked.Add(ref _count, logs.Count);
         Started.TrySetResult();

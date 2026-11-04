@@ -26,7 +26,7 @@ using System.Threading.Tasks;
 namespace LogForwarder.Sinks
 {
     /// <summary>
-    ///     Strategy interface to decide the sinks for exporting the logs.
+    ///     Interface for forwarding DNS log batches to an output sink.
     ///     <para> ADR: Export operations must be cancellable so shutdown can abort long-running
     /// network or disk operations. Without a cancellation token, HTTP, file, or syslog
     /// sinks may block the DNS server shutdown indefinitely. All sinks must respect
@@ -34,6 +34,6 @@ namespace LogForwarder.Sinks
     /// </summary>
     public interface IOutputSink: IDisposable
     {
-        Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token);
+        Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token);
     }
 }

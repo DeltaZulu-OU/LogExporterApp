@@ -27,7 +27,7 @@ public sealed class HttpSinkTests
 
         try
         {
-            await sink.ExportAsync(
+            await sink.ForwardAsync(
                 [TestFixtures.CreateLogEntry("http-failure.example")],
                 CancellationToken.None);
         }
@@ -38,7 +38,7 @@ public sealed class HttpSinkTests
 
         Assert.IsTrue(firstFailed);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [TestFixtures.CreateLogEntry("http-recovery.example")],
             CancellationToken.None);
 

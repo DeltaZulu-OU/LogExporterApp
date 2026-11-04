@@ -54,7 +54,7 @@ namespace LogForwarder.Sinks
             });
         }
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentNullException.ThrowIfNull(logs);

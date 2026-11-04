@@ -127,7 +127,7 @@ namespace LogForwarder.Sinks
             return exception is System.IO.IOException or TimeoutException or TaskCanceledException;
         }
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             // ADR: Once disposed, this strategy must not attempt any I/O. The background
             // worker may still flush a few batches while shutdown is in progress. Treating

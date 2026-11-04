@@ -206,7 +206,7 @@ namespace LogForwarder.Sinks
 
         #region public
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
             {

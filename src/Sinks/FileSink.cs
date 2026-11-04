@@ -69,7 +69,7 @@ namespace LogForwarder.Sinks
 
         #region public
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             // ADR: FileSink writes must honor cancellation so server shutdown cannot block
             // on slow disks or large flush operations. Previously FlushAsync() was not

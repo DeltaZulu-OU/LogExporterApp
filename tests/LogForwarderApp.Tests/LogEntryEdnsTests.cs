@@ -145,7 +145,7 @@ public sealed class LogEntryEdnsTests
             "127.0.0.1", 514, "udp", Task.CompletedTask,
             _ => { }, _ => transport, _ => TimeSpan.Zero);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [
                 CreateEntry(EDnsExtendedDnsErrorCode.NotSupported, null, wireRoundTrip: true),
                 CreateEntry(EDnsExtendedDnsErrorCode.Blocked, "null", wireRoundTrip: true)

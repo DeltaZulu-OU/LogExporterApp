@@ -616,7 +616,7 @@ namespace LogForwarder
             {
                 var dropped = Interlocked.Exchange(ref _droppedCount, 0);
                 _dnsServer?.WriteLog(
-                    $"Log export queue full; dropped {dropped} entries over last {DropLogInterval.TotalSeconds:F0}s.");
+                    $"Log forwarding queue full; dropped {dropped} entries over last {DropLogInterval.TotalSeconds:F0}s.");
             }
         }
 
