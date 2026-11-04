@@ -11,7 +11,7 @@
     <Authors>Zafer Balkan</Authors>
     <AssemblyName>LogForwarderApp</AssemblyName>
     <RootNamespace>LogForwarder</RootNamespace>
-    <PackageProjectUrl>https://technitium.com/dns/</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/DeltaZulu-OU/LogForwarderApp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/DeltaZulu-OU/LogForwarderApp</RepositoryUrl>
     <Description>Processes, enriches, and forwards DNS query logs to configurable output sinks.</Description>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
