@@ -490,7 +490,7 @@ namespace LogExporter.Sinks
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
                     using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
-                    if (_retryPolicy is not null && _options.RetryTimeLimit > TimeSpan.Zero)
+                    if (_retryPolicy?.IsReplayEnabled == true && _options.RetryTimeLimit > TimeSpan.Zero)
                     {
                         var remainingTime = _options.RetryTimeLimit - started.Elapsed;
                         if (remainingTime <= TimeSpan.Zero)
@@ -524,7 +524,7 @@ namespace LogExporter.Sinks
                     {
                         ReportError(ex);
                         var remaining = _options.RetryTimeLimit - started.Elapsed;
-                        if (_retryPolicy is null ||
+                        if (_retryPolicy?.IsReplayEnabled != true ||
                             !_retryPolicy.CanRetry(ex) ||
                             remaining <= TimeSpan.Zero)
                         {
