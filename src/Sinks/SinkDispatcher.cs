@@ -522,16 +522,9 @@ namespace LogExporter.Sinks
                     using var attemptTimer = _timeProvider.CreateTimer(
                         CancelCancellationSource,
                         attemptCts, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                    if (_replayEnabled && _options.RetryTimeLimit > TimeSpan.Zero)
+                    if (!TryArmAttemptDeadline(attemptTimer, started, batch.Count))
                     {
-                        var remainingTime = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
-                        if (remainingTime <= TimeSpan.Zero)
-                        {
-                            RecordTerminalFailure(batch.Count);
-                            return;
-                        }
-
-                        attemptTimer.Change(remainingTime, Timeout.InfiniteTimeSpan);
+                        return;
                     }
 
                     try
@@ -588,6 +581,24 @@ namespace LogExporter.Sinks
                             delay.TotalMilliseconds * 2));
                     }
                 }
+            }
+
+            private bool TryArmAttemptDeadline(ITimer attemptTimer, long started, int count)
+            {
+                if (!_replayEnabled || _options.RetryTimeLimit <= TimeSpan.Zero)
+                {
+                    return true;
+                }
+
+                var remaining = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    RecordTerminalFailure(count);
+                    return false;
+                }
+
+                attemptTimer.Change(remaining, Timeout.InfiniteTimeSpan);
+                return true;
             }
 
             private void RecordTerminalFailure(int count)
