@@ -22,7 +22,7 @@ foreach (var scenario in new[] { new Scenario("single-burst", count), new Scenar
     var times = samples.Select(x => x.Milliseconds).Order().ToArray();
     var allocs = samples.Select(x => (double)x.AllocatedBytes).Order().ToArray();
     cases.Add(new CaseResult(scenario.Name, count, scenario.Chunk,
-        Median(times), Median(allocs), times.First(), times.Last(),
+        Median(times), Median(allocs), times[0], times[^1],
         samples.Select(x => x.Milliseconds).ToArray(),
         samples.Select(x => x.AllocatedBytes).ToArray()));
 }
