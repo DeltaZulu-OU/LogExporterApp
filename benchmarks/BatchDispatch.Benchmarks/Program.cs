@@ -45,7 +45,7 @@ var result = new BenchmarkReport(
 Directory.CreateDirectory(output);
 var jsonPath = Path.Combine(output, "batch-dispatch.json");
 var markdownPath = Path.Combine(output, "batch-dispatch.md");
-File.WriteAllText(jsonPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
 
 var markdown = new List<string>
 {
@@ -67,7 +67,7 @@ foreach (var item in runs)
 {
     markdown.Add($"| {item.BatchSize} | {item.MedianMilliseconds:F2} | {item.EventsPerSecond:F0} | {item.MedianAllocatedBytes:F0} | {item.MeanExportCalls:F0} | {item.MinMilliseconds:F2} | {item.MaxMilliseconds:F2} |");
 }
-File.WriteAllLines(markdownPath, markdown);
+await File.WriteAllLinesAsync(markdownPath, markdown);
 foreach (var line in markdown)
     Console.WriteLine(line);
 
