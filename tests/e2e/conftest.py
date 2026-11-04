@@ -139,7 +139,9 @@ def runtime():
         server.api("zones/records/add", {"zone": "e2e.test", "domain": "*.e2e.test",
                                          "type": qtype, "ipAddress": address, "ttl": 60})
     server.api("settings/set", {"enableBlocking": "true", "blockingType": "NxDomain",
-                                "allowRecursion": "false", "logQueries": "true",
+                                "allowRecursion": "true",
+                                "allowRecursionOnlyForPrivateNetworks": "true",
+                                "logQueries": "true",
                                 "allowTxtBlockingReport": "true"})
     with artifact.open("rb") as fp:
         response = server.api("apps/install?name=LogExporterApp",
@@ -159,8 +161,13 @@ def runtime():
             entries.append(fields[-1])
     assert entries, "The blocked-zone fixture must contain domains"
     server.api("blocked/import", {"blockedZones": ",".join(entries)})
-    wait_until(lambda: "EDE: 15" in probe("blocked.e2e.invalid"),
-               "blocked DNS response with EDE 15", timeout=60)
+    def blocked_response_ready():
+        output = probe("blocked.e2e.invalid")
+        assert "status: NXDOMAIN" in output, output
+        assert "EDE: 15" in output, output
+        return True
+
+    wait_until(blocked_response_ready, "blocked DNS response with EDE 15", timeout=30)
     yield server
     server.session.close()
 
