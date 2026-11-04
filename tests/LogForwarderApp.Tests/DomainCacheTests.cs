@@ -1,8 +1,8 @@
-using LogExporter.Pipeline;
+using LogForwarder.Pipeline;
 using Nager.PublicSuffix;
 using Nager.PublicSuffix.RuleProviders;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class DomainCacheTests

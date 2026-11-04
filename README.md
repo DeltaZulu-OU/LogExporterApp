@@ -1,12 +1,12 @@
-# Log Exporter for Technitium DNS Server
+# Log Forwarder for Technitium DNS Server
 
-[![Manual Release](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/release.yml/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/release.yml)
-[![CodeQL](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/github-code-scanning/codeql)
-[![Dependabot Updates](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/DeltaZulu-OU/LogExporterApp/actions/workflows/dependabot/dependabot-updates)
+[![Manual Release](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/release.yml/badge.svg)](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/release.yml)
+[![CodeQL](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/github-code-scanning/codeql)
+[![Dependabot Updates](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/DeltaZulu-OU/LogForwarderApp/actions/workflows/dependabot/dependabot-updates)
 
-A plugin that exports DNS query logs from [Technitium DNS Server](https://github.com/TechnitiumSoftware/DnsServer) to external sinks such as standard output, files, HTTP endpoints, and Syslog servers.
+A log-processing and forwarding plugin for [Technitium DNS Server](https://github.com/TechnitiumSoftware/DnsServer). It receives completed DNS query logs through the server's logging interface, optionally normalizes and enriches them, and forwards them to configured destinations. It does not independently collect DNS packets.
 
-It uses a bounded asynchronous pipeline: query logs are captured, optionally processed through enrichment stages, and then exported in batches to the configured sinks.
+It uses a bounded asynchronous pipeline: query log events are received, optionally processed through enrichment stages, and then forwarded in batches to configured sinks.
 
 > NOTE: This app is not included in the main Technitium DNS Server repository as of [v15](https://github.com/TechnitiumSoftware/DnsServer/blob/master/CHANGELOG.md#version-150).
 
@@ -14,7 +14,7 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 
 ## Features
 
-- Captures DNS queries and responses through the Technitium DNS Server `IDnsQueryLogger` interface.
+- Receives completed DNS queries and responses through the Technitium DNS Server `IDnsQueryLogger` interface.
 - Uses bounded processing stages and an independent bounded ingress queue for each sink, preventing one slow sink from blocking the others or causing unbounded memory growth.
 - Exports logs through pluggable sinks: console, file, HTTP POST, Syslog, and ClickHouse.
 - Supports optional pipeline processors before export:
@@ -25,9 +25,13 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 - Drops new entries when the pipeline is full and periodically logs the number of dropped records.
 - Drains pending logs during shutdown.
 
+## Renaming and upgrade notes
+
+The application, assembly, project, solution, and release package are named **LogForwarderApp** beginning with version **4.0.0**. The previous assembly/package identity is not retained. Install the new ZIP as a new Technitium application and transfer the existing JSON configuration explicitly; do not assume that Technitium migrates installed application names or configurations automatically. Remove the previous application after verifying the replacement and its sinks to avoid duplicate logging. The configuration schema and delivery behavior are unchanged by this rename.
+
 ## Configuration
 
-> Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
+> This application is distinct from the bundled Technitium logging app. Their configuration formats are not interchangeable.
 >
 > The top-level `sinks` and `pipeline` objects are required. Individual sink and pipeline sections are optional: if a section is omitted, that feature is treated as disabled. If a section is present, `enabled` defaults to `true` unless explicitly set to `false`.
 
@@ -125,7 +129,7 @@ opt into HTTP whole-batch replay by changing only the HTTP sink setting:
   * For normal host installations, prefer `LOCAL` and let the operating system's Syslog daemon, such as rsyslog or an equivalent implementation, handle remote forwarding, buffering, retry, and transport policy. The app intentionally does not try to duplicate those responsibilities. `LOCAL` is available on supported Unix-like hosts and ignores `address`.
   * In containers, prefer `console` when your platform already collects standard output. A sidecar or the platform's logging infrastructure can then handle forwarding and delivery policy. If that is not available or not desired, configure `UDP`, `TCP`, or `TLS` to send directly to a remote Syslog target.
   * For remote Syslog, `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it.
-  * An FQDN is resolved once the DNS server starts answering queries, not while the app loads. If resolution is temporarily unavailable, the Syslog sink retries in the background with capped exponential backoff and jitter until resolution succeeds or the sink is disposed. With `UDP`, the successfully resolved address is kept for the lifetime of the sink. If the Syslog server's IP address changes, restart Technitium DNS Server or reload the Log Exporter configuration so the target is resolved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
+  * An FQDN is resolved once the DNS server starts answering queries, not while the app loads. If resolution is temporarily unavailable, the Syslog sink retries in the background with capped exponential backoff and jitter until resolution succeeds or the sink is disposed. With `UDP`, the successfully resolved address is kept for the lifetime of the sink. If the Syslog server's IP address changes, restart Technitium DNS Server or reload the Log Forwarder configuration so the target is resolved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
   * For `TCP` and `TLS`, an ambiguous write failure may cause the current record to be retried even if the remote peer already received it. Direct remote Syslog therefore favors avoiding loss over avoiding duplicates.
 
 Each sink uses an independent bounded in-memory queue and configurable `batching` settings. The retry budget applies only where whole-batch replay is explicitly enabled; it is not a universal export timeout. File, console and Syslog sinks do not replay whole batches through the dispatcher, as an interrupted operation may already have delivered some records. HTTP replay is opt-in and may duplicate records when an acknowledgment is lost; HTTP 408/429, HTTP 5xx and connection failures are eligible for retry, but HTTP 400 is not. The dispatcher maintains in-memory delivery counters through `SinkDispatcher.GetCounters(Type)`, not a durable audit log or metrics endpoint. Delivery remains best-effort: queue overflow, crashes, failed destinations and forced shutdown may cause losses; exactly-once and guaranteed at-least-once delivery are not provided.
@@ -247,7 +251,7 @@ Formatted for easier review:
 * EDNS logging records Extended DNS Error (EDE) information when enabled. The exporter reads the information code and optional extra text directly from TechnitiumLibrary's typed EDE representation, preserving extra text without modification.
 * Static tags are intended for downstream processing, for example tenant labels, environment labels, or collector-side routing keys.
 * On Linux host installations, prefer `LOCAL` Syslog and delegate remote forwarding and delivery policy to rsyslog or another local Syslog daemon. For containers, prefer `console` with the platform's logging stack or a sidecar when available; direct remote Syslog is an alternative when container logging infrastructure is not used.
-* For UDP Syslog targets configured by FQDN, the resolved IP address is intentionally not refreshed periodically after the sink has started. Restart Technitium DNS Server or reload the Log Exporter configuration after the Syslog server's IP address changes.
+* For UDP Syslog targets configured by FQDN, the resolved IP address is intentionally not refreshed periodically after the sink has started. Restart Technitium DNS Server or reload the Log Forwarder configuration after the Syslog server's IP address changes.
 
 
 ### Reload accounting

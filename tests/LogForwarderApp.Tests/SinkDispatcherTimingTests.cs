@@ -1,7 +1,7 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 using Microsoft.Extensions.Time.Testing;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class SinkDispatcherTimingTests
@@ -86,7 +86,7 @@ public sealed class SinkDispatcherTimingTests
 
         public bool CanRetry(Exception exception) => true;
 
-        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public async Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             Started.TrySetResult();

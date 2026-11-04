@@ -27,7 +27,7 @@ using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.EDnsOptions;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
-namespace LogExporter
+namespace LogForwarder
 {
     public class LogEntry
     {

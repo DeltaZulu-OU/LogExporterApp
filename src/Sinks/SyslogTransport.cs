@@ -8,7 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     internal interface ISyslogTransport : IDisposable
     {

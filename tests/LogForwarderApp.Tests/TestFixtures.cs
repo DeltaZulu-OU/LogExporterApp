@@ -1,14 +1,14 @@
 using DnsServerCore.ApplicationCommon;
-using LogExporter;
-using LogExporter.Pipeline;
-using LogExporter.Sinks;
+using LogForwarder;
+using LogForwarder.Pipeline;
+using LogForwarder.Sinks;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 internal static class TestFixtures
 {
@@ -120,7 +120,7 @@ internal static class TestFixtures
 
     internal static string CreateTempDirectory()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"LogExporterApp-{Guid.NewGuid():N}");
+        var path = Path.Combine(Path.GetTempPath(), $"LogForwarderApp-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }

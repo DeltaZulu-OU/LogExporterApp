@@ -6,7 +6,7 @@ The E2E suite installs the actual release ZIP in a disposable Technitium DNS Ser
 
 The GitHub Actions workflow is triggered by pushes to master, relevant pull requests and manual workflow dispatch. There are no scheduled triggers. It builds the .NET 10 plugin against the pinned git submodules and uses the existing New-ReleasePackage.ps1 script before starting Docker Compose.
 
-To reproduce, install Docker Compose, .NET 10, PowerShell, Python 3.12, dig, pytest and requests. Build TechnitiumLibrary, build src/LogExporterApp.csproj in Release, then package with .github/scripts/New-ReleasePackage.ps1. Set E2E_PACKAGE to the relative ZIP path and E2E_ADMIN_PASSWORD to a random value. Run docker compose -f tests/e2e/compose.yml up -d --wait; pytest -q tests/e2e/test_e2e.py; then docker compose -f tests/e2e/compose.yml down -v.
+To reproduce, install Docker Compose, .NET 10, PowerShell, Python 3.12, dig, pytest and requests. Build TechnitiumLibrary, build src/LogForwarderApp.csproj in Release, then package with .github/scripts/New-ReleasePackage.ps1. Set E2E_PACKAGE to the relative ZIP path and E2E_ADMIN_PASSWORD to a random value. Run docker compose -f tests/e2e/compose.yml up -d --wait; pytest -q tests/e2e/test_e2e.py; then docker compose -f tests/e2e/compose.yml down -v.
 
 JUnit XML, sanitized collector state, container diagnostics, and the file sink output are captured in the `e2e-evidence` artifact.
 

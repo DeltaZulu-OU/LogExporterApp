@@ -1,6 +1,6 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class SinkDispatcherTests
@@ -361,7 +361,7 @@ public sealed class SinkDispatcherTests
         public TaskCompletionSource SecondFlush { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             BatchSizes.Add(logs.Count);
             if (BatchSizes.Count == 1)
@@ -378,7 +378,7 @@ public sealed class SinkDispatcherTests
         public int Attempts { get; private set; }
         public bool IsReplayEnabled => false;
         public bool CanRetry(Exception exception) => false;
-        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public async Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             await Task.Delay(100, token);
@@ -389,7 +389,7 @@ public sealed class SinkDispatcherTests
     private sealed class LateAcknowledgementSink : IOutputSink, IBatchRetryPolicy
     {
         public bool CanRetry(Exception exception) => false;
-        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public async Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             // The receiver reports success after the local deadline has elapsed.
             try
@@ -408,7 +408,7 @@ public sealed class SinkDispatcherTests
     {
         public int Attempts { get; private set; }
         public bool CanRetry(Exception exception) => throw new InvalidOperationException("Policy failure.");
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             throw new IOException("Transport failed.");
@@ -419,7 +419,7 @@ public sealed class SinkDispatcherTests
     private sealed class BatchSizeRecordingSink : IOutputSink
     {
         public List<int> BatchSizes { get; } = new();
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             BatchSizes.Add(logs.Count);
             return Task.CompletedTask;
@@ -430,7 +430,7 @@ public sealed class SinkDispatcherTests
     private sealed class DisposalTrackingSink : IOutputSink
     {
         public bool WasDisposed { get; private set; }
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token) =>
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token) =>
             Task.CompletedTask;
         public void Dispose() => WasDisposed = true;
     }
@@ -439,7 +439,7 @@ public sealed class SinkDispatcherTests
     {
         public int Attempts { get; private set; }
         public List<string> Delivered { get; } = new();
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             Delivered.Add(logs[0].Question!.QuestionName!);
@@ -452,7 +452,7 @@ public sealed class SinkDispatcherTests
     {
         public int Attempts { get; private set; }
         public bool CanRetry(Exception exception) => false;
-        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Attempts++;
             throw new InvalidOperationException("Permanent failure");
@@ -465,7 +465,7 @@ public sealed class SinkDispatcherTests
         private int _attempts;
         public int Attempts => Volatile.Read(ref _attempts);
         public bool CanRetry(Exception exception) => true;
-        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        public async Task ExportAsync(IReadOnlyList<LogForwarder.LogEntry> logs, CancellationToken token)
         {
             Interlocked.Increment(ref _attempts);
             await Task.Delay(Timeout.InfiniteTimeSpan, token);

@@ -89,7 +89,7 @@ class Runtime:
                                             "tagging": {"enabled": True, "tags": ["tenant:ci"]}}}
 
     def set_config(self, config):
-        return self.api("apps/config/set?name=LogExporterApp", {"config": json.dumps(config)})
+        return self.api("apps/config/set?name=LogForwarderApp", {"config": json.dumps(config)})
 
     def collector(self, path="/state", data=None):
         if data is None:
@@ -151,10 +151,10 @@ def runtime():
                                 # Trust only that test-environment range, never arbitrary peers.
                                 "dnsReverseProxyNetworkACL": "172.16.0.0/12"})
     with artifact.open("rb") as fp:
-        response = server.api("apps/install?name=LogExporterApp",
+        response = server.api("apps/install?name=LogForwarderApp",
                               files={"file": (artifact.name, fp, "application/zip")})
     apps = server.api("apps/list")["response"]["apps"]
-    installed = next((app for app in apps if app.get("name") == "LogExporterApp"), None)
+    installed = next((app for app in apps if app.get("name") == "LogForwarderApp"), None)
     assert installed is not None, f"Plugin not installed: {response}"
     assert any(entry.get("isQueryLogger") for entry in installed.get("dnsApps", [])), (
         f"Plugin does not register a query logger: {installed}")

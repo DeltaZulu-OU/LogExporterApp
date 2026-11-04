@@ -1,6 +1,6 @@
 using System.Net.Sockets;
-using LogExporter.Sinks;
-namespace LogExporterApp.Tests;
+using LogForwarder.Sinks;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class SyslogSinkTests

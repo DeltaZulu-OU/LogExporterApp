@@ -220,10 +220,10 @@ def test_edns_disabled_does_not_emit_optional_ede(runtime):
     assert record["edns"] == []
 
 
-def test_invalid_config_preserves_active_exporter(runtime, unique_name):
+def test_invalid_config_preserves_active_forwarder(runtime, unique_name):
     import requests
     response = runtime.session.post(
-        f"{API}/apps/config/set?name=LogExporterApp",
+        f"{API}/apps/config/set?name=LogForwarderApp",
         data={"config": json.dumps({"sinks": {"file": {"enabled": True}}, "pipeline": {}})},
         timeout=20,
     )

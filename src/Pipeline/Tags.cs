@@ -21,7 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace LogExporter.Pipeline
+namespace LogForwarder.Pipeline
 {
     public partial class Tags : IPipelineProcessor
     {

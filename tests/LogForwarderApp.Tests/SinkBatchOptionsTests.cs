@@ -1,6 +1,6 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class SinkBatchOptionsTests

@@ -32,7 +32,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     /// <summary>
     /// Exports query logs to a syslog server over UDP, TCP, TLS, or the local syslog daemon.

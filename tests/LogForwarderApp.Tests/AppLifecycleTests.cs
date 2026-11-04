@@ -1,6 +1,6 @@
-using LogExporter;
+using LogForwarder;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class AppLifecycleTests

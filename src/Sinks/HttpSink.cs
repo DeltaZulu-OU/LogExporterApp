@@ -28,7 +28,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.IO;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     public sealed class HttpSink : IOutputSink, IBatchRetryPolicy
     {

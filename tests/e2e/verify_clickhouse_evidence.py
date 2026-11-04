@@ -19,7 +19,7 @@ EXPECTED = {
     "test_clickhouse_persists_live_dns_event": 1,
     "test_clickhouse_preserves_authoritative_nxdomain": 1,
     "test_clickhouse_disabled_does_not_capture_events": 0,
-    "test_clickhouse_invalid_replay_config_keeps_exporter_active": 0,
+    "test_clickhouse_invalid_replay_config_keeps_forwarder_active": 0,
 }
 
 

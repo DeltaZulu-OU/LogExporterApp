@@ -22,7 +22,7 @@ EXPECTED_ROW_COUNTS = {
     "test_clickhouse_persists_live_dns_event": 1,
     "test_clickhouse_preserves_authoritative_nxdomain": 1,
     "test_clickhouse_disabled_does_not_capture_events": 0,
-    "test_clickhouse_invalid_replay_config_keeps_exporter_active": 0,
+    "test_clickhouse_invalid_replay_config_keeps_forwarder_active": 0,
 }
 
 
@@ -173,7 +173,7 @@ def test_clickhouse_disabled_does_not_capture_events(runtime, unique_name, click
     assert stored_rows(clickhouse_table, unique_name) == []
 
 
-def test_clickhouse_invalid_replay_config_keeps_exporter_active(runtime, unique_name, clickhouse_table):
+def test_clickhouse_invalid_replay_config_keeps_forwarder_active(runtime, unique_name, clickhouse_table):
     config = runtime.config()
     config["sinks"]["clickhouse"] = {
         "enabled": True,
@@ -184,7 +184,7 @@ def test_clickhouse_invalid_replay_config_keeps_exporter_active(runtime, unique_
     }
     from conftest import API
     response = runtime.session.post(
-        f"{API}/apps/config/set?name=LogExporterApp",
+        f"{API}/apps/config/set?name=LogForwarderApp",
         data={"config": json.dumps(config)},
         timeout=20,
     )

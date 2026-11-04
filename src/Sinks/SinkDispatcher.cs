@@ -24,7 +24,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     public sealed class SinkDispatcher : IDisposable
     {

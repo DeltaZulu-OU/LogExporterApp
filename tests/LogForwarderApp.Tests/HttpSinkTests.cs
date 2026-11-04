@@ -1,9 +1,9 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class HttpSinkTests

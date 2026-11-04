@@ -1,8 +1,8 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 using Serilog.Core;
 using Serilog.Events;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class ClickHouseSinkTests
