@@ -4,6 +4,12 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/integration.yml'
+      - '.github/scripts/New-ReleasePackage.ps1'
 
 permissions:
   contents: read
@@ -54,7 +60,7 @@ jobs:
 
       - name: Validate plugin package
         run: |
-          python -c 'import os,zipfile; p=os.environ["E2E_PACKAGE"]; z=zipfile.ZipFile(p); names=set(z.namelist()); required={"LogExporterApp.dll","LogExporterApp.deps.json","dnsApp.config"}; assert required.issubset(names), (p, required-names); assert z.testzip() is None'
+          python -c 'import os,zipfile; p=os.environ["E2E_PACKAGE"]; z=zipfile.ZipFile(p); names=set(z.namelist()); required={"LogExporterApp.dll","LogExporterApp.deps.json","dnsApp.config","Serilog.Sinks.ClickHouse.dll","ClickHouse.Driver.dll","Serilog.dll"}; assert required.issubset(names), (p, required-names); assert z.testzip() is None'
 
       - name: Prepare isolated test environment
         run: |
@@ -65,7 +71,7 @@ jobs:
         run: docker compose -f tests/e2e/compose.yml up --detach --wait --wait-timeout 120
 
       - name: Run live DNS E2E suite
-        run: pytest -q tests/e2e/test_e2e.py --junitxml=tests/e2e/results/junit.xml
+        run: pytest -q tests/e2e/test_e2e.py tests/e2e/test_clickhouse.py --junitxml=tests/e2e/results/junit.xml
 
       - name: Capture Docker diagnostics
         if: always()

@@ -46,10 +46,13 @@ def matches(records, name, qtype="A"):
             and (r.get("question") or {}).get("questionType") == qtype]
 
 
-def probe(name, qtype="A", tcp=False, edns=True):
+def probe(name, qtype="A", tcp=False, edns=True, ecs=None):
     cmd = ["dig", "@127.0.0.1", "-p", "1053", name, qtype, "+tries=1", "+time=2",
            "+noall", "+comments", "+answer", "+additional"]
     cmd.append("+tcp" if tcp else "+notcp")
+    if ecs is not None:
+        assert edns, "ECS requires EDNS"
+        cmd.append(f"+subnet={ecs}")
     cmd.append("+edns=0" if edns else "+noedns")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=8, check=False)
     assert result.returncode == 0, f"dig failed: {result.stdout} {result.stderr}"
@@ -139,9 +142,14 @@ def runtime():
         server.api("zones/records/add", {"zone": "e2e.test", "domain": "*.e2e.test",
                                          "type": qtype, "ipAddress": address, "ttl": 60})
     server.api("settings/set", {"enableBlocking": "true", "blockingType": "NxDomain",
-                                "allowRecursion": "false", "logQueries": "true",
+                                "allowRecursion": "true",
+                                "allowRecursionOnlyForPrivateNetworks": "true",
+                                "logQueries": "true",
                                 "allowTxtBlockingReport": "true",
-                                "blockListUrls": "http://collector:8080/blocklist.txt"})
+                                "enableEDnsClientSubnetSourceAddress": "true",
+                                # Host-to-container requests arrive through Docker bridge gateway.
+                                # Trust only that test-environment range, never arbitrary peers.
+                                "dnsReverseProxyNetworkACL": "172.16.0.0/12"})
     with artifact.open("rb") as fp:
         response = server.api("apps/install?name=LogExporterApp",
                               files={"file": (artifact.name, fp, "application/zip")})
@@ -151,10 +159,21 @@ def runtime():
     assert any(entry.get("isQueryLogger") for entry in installed.get("dnsApps", [])), (
         f"Plugin does not register a query logger: {installed}")
     server.set_config(server.config())
-    server.api("settings/forceUpdateBlockLists")
-    wait_until(lambda: server.collector()["blocklist_hits"] > 0, "blocklist fetch", timeout=60)
-    wait_until(lambda: "EDE: 15" in probe("blocked.e2e.invalid"),
-               "blocked DNS response with EDE 15", timeout=60)
+    # Seed the real blocked zone from a pinned local fixture. This avoids relying
+    # on asynchronous block-list updates or container DNS resolution.
+    entries = []
+    for line in (Path(__file__).with_name("fixtures") / "blocklist.txt").read_text().splitlines():
+        fields = line.split("#", 1)[0].split()
+        if fields:
+            entries.append(fields[-1])
+    assert entries, "The blocked-zone fixture must contain domains"
+    server.api("blocked/import", {"blockedZones": ",".join(entries)})
+    def blocked_response_ready():
+        output = probe("blocked.e2e.invalid")
+        assert "status: NXDOMAIN" in output, output
+        return True
+
+    wait_until(blocked_response_ready, "blocked-zone NXDOMAIN", timeout=30)
     yield server
     server.session.close()
 

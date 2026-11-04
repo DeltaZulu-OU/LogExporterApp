@@ -16,7 +16,7 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 
 - Captures DNS queries and responses through the Technitium DNS Server `IDnsQueryLogger` interface.
 - Uses bounded processing stages and an independent bounded ingress queue for each sink, preventing one slow sink from blocking the others or causing unbounded memory growth.
-- Exports logs through pluggable sinks: console, file, HTTP POST, and Syslog.
+- Exports logs through pluggable sinks: console, file, HTTP POST, Syslog, and ClickHouse.
 - Supports optional pipeline processors before export:
   - domain normalization with Public Suffix List based metadata;
   - static tag injection for downstream routing or tenant identification.
@@ -50,6 +50,89 @@ durable audit log or a metrics endpoint. Queue overflow and retry exhaustion
 are reported, but process crashes, forced shutdown, and permanently unavailable
 destinations can still cause data loss. The system provides **best-effort,
 bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
+
+## ClickHouse sink
+
+The optional `sinks.clickhouse` integration uses the official
+[Serilog.Sinks.ClickHouse](https://github.com/ClickHouse/Serilog.Sinks.ClickHouse)
+v2.3.0 package and its `IBatchedLogEventSink.EmitBatchAsync` API. The existing
+`SinkDispatcher` owns bounded queues, batch sizing and delivery accounting;
+the adapter calls the Serilog sink directly without creating a second batching
+queue or Serilog logger. The ClickHouse driver performs binary bulk inserts.
+
+The integration test uses ClickHouse 25.8. On ClickHouse 24.12, the native
+`JSON` column requires enabling `enable_json_type=1`; the default server
+configuration rejected its creation during CI validation. Validate the database
+version and JSON support before deploying.
+
+The target ClickHouse table is **managed externally**, and must exist before
+the first batch. The adapter uses the Serilog default columns
+(`timestamp`, `level`, `message`, `message_template`, `exception`,
+`properties`) plus query dimensions (`client_ip`, `q_name`, `q_type`,
+`response_code`, `response_type`) and a complete `payload_json` string.
+The native `properties` JSON column also contains these mapped DNS properties.
+
+Example DDL (verified against ClickHouse 25.8):
+
+```sql
+CREATE DATABASE IF NOT EXISTS dns;
+CREATE TABLE IF NOT EXISTS dns.events
+(
+    timestamp DateTime64(3, 'UTC'),
+    level LowCardinality(String),
+    message String,
+    message_template String,
+    exception Nullable(String),
+    properties JSON,
+    client_ip String,
+    q_name String,
+    q_type LowCardinality(String),
+    response_code LowCardinality(String),
+    response_type LowCardinality(String),
+    payload_json String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (timestamp, q_name)
+TTL timestamp + INTERVAL 30 DAY;
+```
+
+Configure the connection through the official ClickHouse driver connection
+string, rather than a raw HTTP endpoint:
+
+```json
+{
+  "sinks": {
+    "maxQueueSize": 100000,
+    "clickhouse": {
+      "enabled": true,
+      "connectionString": "Host=clickhouse.example.com;Port=8443;Database=dns;Username=dns_ingest;Password=REPLACE_ME;Protocol=https",
+      "database": "dns",
+      "table": "events",
+      "batching": {
+        "batchSize": 1000,
+        "batchDelayMs": 1000
+      }
+    }
+  },
+  "pipeline": {}
+}
+```
+
+The connection string uses the official `ClickHouse.Driver` settings for HTTPS (`Protocol=https`) and authentication (`Username`/`Password`).
+Use a dedicated user with `INSERT` and table-existence inspection privileges,
+and protect the configuration because it contains credentials.
+
+**Whole-batch replay is not supported for this adapter.** The upstream Serilog
+batch interface lacks a cancellation-token parameter, so the adapter can check
+cancellation *before* a batch but cannot reliably interrupt a running insert.
+`allowBatchReplay: true` is explicitly rejected. Errors propagate to the
+dispatcher as unconfirmed deliveries, and forced shutdown cannot guarantee
+that an in-flight insert is interrupted. The bounded queue is volatile and
+does not provide durable spooling or exactly-once delivery.
+
+No automatic schema migration, separate Serilog batching queue or custom
+HTTP/JSONEachRow insert client is implemented.
 
 ## Configuration
 

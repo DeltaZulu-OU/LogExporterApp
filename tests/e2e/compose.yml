@@ -13,17 +13,30 @@ services:
       timeout: 3s
       retries: 20
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ports:
+      - "127.0.0.1:18123:8123"
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   dns:
     image: technitium/dns-server:15.6.2
     depends_on:
       collector:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
     environment:
       DNS_SERVER_DOMAIN: dns.e2e.test
       DNS_SERVER_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:?required}
       DNS_SERVER_ENABLE_BLOCKING: "true"
       DNS_SERVER_ALLOW_TXT_BLOCKING_REPORT: "true"
-      DNS_SERVER_BLOCK_LIST_URLS: http://collector:8080/blocklist.txt
     ports:
       - "127.0.0.1:15380:5380/tcp"
       - "127.0.0.1:1053:53/udp"

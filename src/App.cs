@@ -414,6 +414,7 @@ namespace LogExporter
             ConfigureConsoleSink(sinks.ConsoleSinkConfig, sinks.MaxQueueSize);
             ConfigureFileSink(sinks.FileSinkConfig, sinks.MaxQueueSize);
             ConfigureHttpSink(sinks.HttpSinkConfig, sinks.MaxQueueSize);
+            ConfigureClickHouseSink(sinks.ClickHouseSinkConfig, sinks.MaxQueueSize);
             ConfigureSyslogSink(sinks.SyslogSinkConfig, sinks.MaxQueueSize);
         }
 
@@ -501,6 +502,30 @@ namespace LogExporter
             catch (Exception ex)
             {
                 LogUnexpectedSinkFailure("HTTP", ex);
+            }
+        }
+
+        private void ConfigureClickHouseSink(SinkConfig.ClickHouseConfig? config, int queueCapacity)
+        {
+            _sinkDispatcher.Remove(typeof(ClickHouseSink));
+            if (config?.Enabled is not true)
+                return;
+
+            try
+            {
+                _sinkDispatcher.Add(
+                    new ClickHouseSink(config.ConnectionString!, config.Database!, config.Table!),
+                    BatchOptions(queueCapacity, config.Batching),
+                    ex => _dnsServer?.WriteLog(ex),
+                    message => _dnsServer?.WriteLog(message));
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
+            {
+                LogSinkDisabled("ClickHouse", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                LogUnexpectedSinkFailure("ClickHouse", ex);
             }
         }
 

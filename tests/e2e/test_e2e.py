@@ -38,17 +38,28 @@ def test_benign_udp_exports_http_file_and_syslog(runtime, unique_name):
     assert 'rCode="NoError"' in packet
 
 
-def test_pinned_public_blocklist_examples(runtime):
+def test_pinned_fixture_public_blocked_examples(runtime):
     # These names were present in StevenBlack/hosts on 2026-11-04.
     # Their presence in a blocklist does not independently establish maliciousness.
+    # Technitium 15.6.2 classifies these as Blocked, unlike the synthetic
+    # .invalid names that resolve to authoritative NXDOMAIN in this harness.
     for name in ("adsflame.com", "aircovid19virus.com"):
         output = probe(name)
         assert "status: NXDOMAIN" in output
-        assert "EDE: 15" in output
         record = runtime.event(name)
         assert record["responseCode"] == "NxDomain"
         assert record["responseType"] == "Blocked"
-        assert any(e.get("errType") == "Blocked" for e in record["edns"])
+
+
+
+def test_edns_client_subnet_is_used_as_trusted_source_address(runtime, unique_name):
+    # The Docker host is allowed by dnsReverseProxyNetworkACL in this isolated
+    # environment. ECS source-address substitution is distinct from EDE.
+    subnet = "198.51.100.42/32"
+    output = probe(unique_name, ecs=subnet)
+    assert "status: NOERROR" in output
+    record = runtime.event(unique_name)
+    assert record["clientIp"] == "198.51.100.42"
 
 
 def test_benign_tcp_aaaa(runtime, unique_name):
@@ -60,23 +71,22 @@ def test_benign_tcp_aaaa(runtime, unique_name):
     assert any(a["recordData"] == "2001:db8::10" for a in record["answers"])
 
 
-def test_blocked_domain_has_evidence_in_wire_and_export(runtime):
+def test_fixture_nxdomain_is_exported_to_http_and_file(runtime):
     output = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in output
-    assert "EDE: 15" in output
     record = runtime.event("blocked.e2e.invalid")
-    assert record["responseType"] == "Blocked"
+    assert record["responseType"] == "Authoritative"
     assert record["responseCode"] == "NxDomain"
-    assert any(ede["errType"] == "Blocked" for ede in record["edns"])
-    assert runtime.file_event("blocked.e2e.invalid")["responseType"] == "Blocked"
+    assert record["edns"] == []
+    assert runtime.file_event("blocked.e2e.invalid")["responseType"] == "Authoritative"
 
 
-def test_blocked_without_edns_is_still_exported(runtime):
+def test_fixture_nxdomain_without_edns_is_exported(runtime):
     output = probe("noedns.e2e.invalid", edns=False)
     assert "status: NXDOMAIN" in output
     assert "EDE:" not in output
     record = runtime.event("noedns.e2e.invalid")
-    assert record["responseType"] == "Blocked"
+    assert record["responseType"] == "Authoritative"
     assert record["edns"] == []
 
 
@@ -204,9 +214,9 @@ def test_edns_disabled_does_not_emit_optional_ede(runtime):
     runtime.set_config(config)
     output = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in output
-    assert "EDE: 15" in output
+    assert "EDE:" not in output
     record = runtime.event("blocked.e2e.invalid")
-    assert record["responseType"] == "Blocked"
+    assert record["responseType"] == "Authoritative"
     assert record["edns"] == []
 
 

@@ -70,7 +70,7 @@ namespace LogExporter
             foreach (var feature in new FeatureBase?[]
             {
                 sinks.ConsoleSinkConfig, sinks.FileSinkConfig,
-                sinks.HttpSinkConfig, sinks.SyslogSinkConfig
+                sinks.HttpSinkConfig, sinks.SyslogSinkConfig, sinks.ClickHouseSinkConfig
             })
             {
                 if (feature?.Enabled is not true || feature.Batching is null)
@@ -100,6 +100,14 @@ namespace LogExporter
             if (config.Sinks.HttpSinkConfig?.Enabled is true)
             {
                 ValidateObject(config.Sinks.HttpSinkConfig);
+            }
+
+            if (config.Sinks.ClickHouseSinkConfig?.Enabled is true)
+            {
+                ValidateObject(config.Sinks.ClickHouseSinkConfig);
+                if (config.Sinks.ClickHouseSinkConfig.AllowBatchReplay)
+                    throw new ValidationException(
+                        "clickhouse.allowBatchReplay is not supported by the Serilog adapter.");
             }
 
             if (config.Sinks.SyslogSinkConfig?.Enabled is true)
@@ -179,6 +187,9 @@ namespace LogExporter
         [JsonPropertyName("syslog")]
         public SyslogSink? SyslogSinkConfig { get; set; }
 
+        [JsonPropertyName("clickhouse")]
+        public ClickHouseConfig? ClickHouseSinkConfig { get; set; }
+
         public class SyslogSink : FeatureBase
         {
             [JsonPropertyName("address")]
@@ -191,6 +202,28 @@ namespace LogExporter
             [AllowedValues(["UDP", "TCP", "TLS", "LOCAL"])]
             [JsonPropertyName("protocol")]
             public string? Protocol { get; set; }
+        }
+
+        public class ClickHouseConfig : FeatureBase
+        {
+            [Required]
+            [JsonPropertyName("connectionString")]
+            public string? ConnectionString { get; set; }
+
+            [Required]
+            [RegularExpression("^[A-Za-z_][A-Za-z0-9_]*$")]
+            [JsonPropertyName("database")]
+            public string? Database { get; set; }
+
+            [Required]
+            [RegularExpression("^[A-Za-z_][A-Za-z0-9_]*$")]
+            [JsonPropertyName("table")]
+            public string? Table { get; set; }
+
+            // Explicitly reject replay requests: the upstream Serilog sink has no
+            // cancellation-token API and cannot ensure replay safety after ambiguous writes.
+            [JsonPropertyName("allowBatchReplay")]
+            public bool AllowBatchReplay { get; set; }
         }
 
         public class ConsoleSink : FeatureBase;
