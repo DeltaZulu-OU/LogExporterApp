@@ -21,6 +21,9 @@ concurrency:
 jobs:
   integration:
     runs-on: ubuntu-latest
+    env:
+      # For pull_request events GITHUB_SHA is the synthetic merge revision.
+      E2E_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     timeout-minutes: 25
     steps:
       - name: Checkout with Technitium submodules
@@ -72,6 +75,9 @@ jobs:
 
       - name: Run live DNS E2E suite
         run: pytest -q tests/e2e/test_e2e.py tests/e2e/test_clickhouse.py --junitxml=tests/e2e/results/junit.xml
+
+      - name: Validate ClickHouse query-result evidence
+        run: python tests/e2e/verify_clickhouse_evidence.py
 
       - name: Capture Docker diagnostics
         if: always()
