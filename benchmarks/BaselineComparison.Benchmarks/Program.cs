@@ -14,14 +14,14 @@ const string implementation = "master";
 const string implementation = "pr";
 #endif
 var cases = new List<CaseResult>();
-foreach (var scenario in new[] { new Scenario("single-burst", 1, count), new Scenario("chunked", 1, 1000), new Scenario("two-sinks", 2, 1000) })
+foreach (var scenario in new[] { new Scenario("single-burst", count), new Scenario("chunked", 1000) })
 {
     await Measure(Math.Min(count, 4096), scenario);
     var samples = new List<Sample>();
     for (int i = 0; i < trials; i++) samples.Add(await Measure(count, scenario));
     var times = samples.Select(x => x.Milliseconds).Order().ToArray();
     var allocs = samples.Select(x => (double)x.AllocatedBytes).Order().ToArray();
-    cases.Add(new CaseResult(scenario.Name, count, scenario.Sinks, scenario.Chunk,
+    cases.Add(new CaseResult(scenario.Name, count, scenario.Chunk,
         Median(times), Median(allocs), times.First(), times.Last(),
         samples.Select(x => x.Milliseconds).ToArray(),
         samples.Select(x => x.AllocatedBytes).ToArray()));
@@ -61,11 +61,9 @@ static double Median(double[] sorted) => sorted.Length % 2 == 1
 static async Task<Sample> Measure(int count, Scenario scenario)
 {
     using var dispatcher = new SinkDispatcher();
-    using var first = new PrimarySink();
-    using var second = new SecondarySink();
+    using var sink = new CountingSink();
 #if BASELINE
-    dispatcher.Add(first, count + 1);
-    if (scenario.Sinks == 2) dispatcher.Add(second, count + 1);
+    dispatcher.Add(sink, count + 1);
 #else
     var config = new SinkBatchOptions
     {
@@ -74,8 +72,7 @@ static async Task<Sample> Measure(int count, Scenario scenario)
         BatchDelay = TimeSpan.FromMilliseconds(25),
         RetryTimeLimit = TimeSpan.Zero
     };
-    dispatcher.Add(first, config);
-    if (scenario.Sinks == 2) dispatcher.Add(second, config);
+    dispatcher.Add(sink, config);
 #endif
     // Null element values deliberately isolate dispatcher overhead from LogEntry construction.
     var entries = new LogEntry[count];
@@ -89,11 +86,9 @@ static async Task<Sample> Measure(int count, Scenario scenario)
     await dispatcher.DrainAsync();
     timer.Stop();
     long allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
-    Verify(first, count);
-    if (scenario.Sinks == 2) Verify(second, count);
+    Verify(sink, count);
 #if !BASELINE
-    VerifyCounters(dispatcher, first, count);
-    if (scenario.Sinks == 2) VerifyCounters(dispatcher, second, count);
+    VerifyCounters(dispatcher, sink, count);
 #endif
     return new Sample(timer.Elapsed.TotalMilliseconds, allocated);
 }
@@ -113,7 +108,7 @@ static void VerifyCounters(SinkDispatcher dispatcher, CountingSink sink, int cou
 }
 #endif
 
-internal abstract class CountingSink : IOutputSink
+internal sealed class CountingSink : IOutputSink
 {
     public int Events { get; private set; }
     public int Batches { get; private set; }
@@ -127,11 +122,9 @@ internal abstract class CountingSink : IOutputSink
     }
     public void Dispose() { }
 }
-internal sealed class PrimarySink : CountingSink;
-internal sealed class SecondarySink : CountingSink;
-internal sealed record Scenario(string Name, int Sinks, int Chunk);
+internal sealed record Scenario(string Name, int Chunk);
 internal sealed record Sample(double Milliseconds, long AllocatedBytes);
-internal sealed record CaseResult(string Name, int Events, int Sinks, int Chunk,
+internal sealed record CaseResult(string Name, int Events, int Chunk,
     double MedianMilliseconds, double MedianAllocatedBytes, double MinMilliseconds,
     double MaxMilliseconds, double[] DurationSamples, long[] AllocationSamples);
 internal sealed record ComparisonRun(string Label, string Implementation, DateTimeOffset Timestamp,
