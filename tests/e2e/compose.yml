@@ -1,0 +1,36 @@
+services:
+  collector:
+    image: python:3.12-slim
+    command: ["python", "/app/collector.py"]
+    volumes:
+      - ./collector.py:/app/collector.py:ro
+      - ./fixtures:/app/fixtures:ro
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  dns:
+    image: technitium/dns-server:15.6.2
+    depends_on:
+      collector:
+        condition: service_healthy
+    environment:
+      DNS_SERVER_DOMAIN: dns.e2e.test
+      DNS_SERVER_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:?required}
+      DNS_SERVER_ENABLE_BLOCKING: "true"
+      DNS_SERVER_ALLOW_TXT_BLOCKING_REPORT: "true"
+      DNS_SERVER_BLOCK_LIST_URLS: http://collector:8080/blocklist.txt
+    ports:
+      - "127.0.0.1:15380:5380/tcp"
+      - "127.0.0.1:1053:53/udp"
+      - "127.0.0.1:1053:53/tcp"
+    volumes:
+      - dns-config:/etc/dns
+      - ./results:/results
+
+volumes:
+  dns-config:
