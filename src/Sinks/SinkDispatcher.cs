@@ -550,24 +550,8 @@ namespace LogExporter.Sinks
                     {
                         ReportError(ex);
                         var remaining = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
-                        bool canRetry;
-                        try
+                        if (!ShouldRetry(ex, remaining, batch.Count))
                         {
-                            canRetry = _replayEnabled &&
-                                       remaining > TimeSpan.Zero &&
-                                       _retryPolicy!.CanRetry(ex);
-                        }
-                        catch (Exception policyError)
-                        {
-                            // A faulty retry policy must not bypass delivery accounting.
-                            ReportError(policyError);
-                            RecordTerminalFailure(batch.Count);
-                            return;
-                        }
-
-                        if (!canRetry)
-                        {
-                            RecordTerminalFailure(batch.Count);
                             return;
                         }
 
@@ -581,6 +565,26 @@ namespace LogExporter.Sinks
                             delay.TotalMilliseconds * 2));
                     }
                 }
+            }
+
+            private bool ShouldRetry(Exception error, TimeSpan remaining, int count)
+            {
+                try
+                {
+                    if (_replayEnabled && remaining > TimeSpan.Zero &&
+                        _retryPolicy!.CanRetry(error))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception policyError)
+                {
+                    // A faulty policy cannot bypass delivery accounting.
+                    ReportError(policyError);
+                }
+
+                RecordTerminalFailure(count);
+                return false;
             }
 
             private bool TryArmAttemptDeadline(ITimer attemptTimer, long started, int count)
