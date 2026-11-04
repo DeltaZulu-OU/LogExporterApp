@@ -1,3 +1,4 @@
+using LogExporter.Benchmarks;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -119,27 +120,3 @@ static async Task<Sample> RunOnce(int count, int batchSize)
 
     return new Sample(timer.Elapsed.TotalMilliseconds, allocated, sink.Batches);
 }
-
-internal sealed class CountingSink : IOutputSink
-{
-    public long Events { get; private set; }
-    public int Batches { get; private set; }
-    public int LargestBatch { get; private set; }
-
-    public Task ExportAsync(IReadOnlyList<LogEntry> batch, CancellationToken cancellationToken)
-    {
-        Events += batch.Count;
-        Batches++;
-        LargestBatch = Math.Max(LargestBatch, batch.Count);
-        return Task.CompletedTask;
-    }
-
-    public void Dispose() { }
-}
-
-internal sealed record Sample(double Milliseconds, long AllocatedBytes, int Batches);
-internal sealed record CaseResult(int BatchSize, int Events, int Iterations,
-    double MedianMilliseconds, double EventsPerSecond, double MedianAllocatedBytes,
-    double MeanExportCalls, double MinMilliseconds, double MaxMilliseconds);
-internal sealed record BenchmarkReport(DateTimeOffset Timestamp, string Runtime, string OS,
-    int ProcessorCount, string Scope, List<CaseResult> Results);
