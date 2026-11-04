@@ -203,7 +203,8 @@ def test_edns_disabled_does_not_emit_optional_ede(runtime):
     config["sinks"]["enableEdnsLogging"] = False
     runtime.set_config(config)
     output = probe("blocked.e2e.invalid")
-    assert "status: NXDOMAIN" in output and "EDE: 15" in output
+    assert "status: NXDOMAIN" in output
+    assert "EDE: 15" in output
     record = runtime.event("blocked.e2e.invalid")
     assert record["responseType"] == "Blocked"
     assert record["edns"] == []
