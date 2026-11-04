@@ -98,7 +98,8 @@ def test_clickhouse_preserves_blocking_evidence(runtime, clickhouse_table):
     assert row["response_type"] == "Blocked"
     payload = json.loads(row["payload_json"])
     assert payload["responseType"] == "Blocked"
-    assert any(error.get("errType") == "Blocked" for error in payload["edns"])
+    assert payload["question"]["questionName"] == "blocked.e2e.invalid"
+    assert payload["edns"] == []
 
 
 def test_clickhouse_disabled_does_not_capture_events(runtime, unique_name, clickhouse_table):
