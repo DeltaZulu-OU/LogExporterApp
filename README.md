@@ -25,115 +25,6 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 - Drops new entries when the pipeline is full and periodically logs the number of dropped records.
 - Drains pending logs during shutdown.
 
-## Batch delivery and retry semantics
-
-Each sink has an independent bounded in-memory queue. Configurable `batching` settings
-include `batchSize`, `batchDelayMs`, `retryTimeLimitMs`, `initialRetryDelayMs`
-and `maxRetryDelayMs`. The retry budget applies to sinks that explicitly opt into
-whole-batch replay; it does not impose a universal timeout on other sink implementations.
-
-**Whole-batch replay is disabled for file, console and syslog output** because they
-can partially deliver a batch before an exception. Syslog retains its own
-transport-level recovery and is not retried a second time by the dispatcher.
-
-HTTP whole-batch replay is **disabled by default**. Set
-`sinks.http.allowBatchReplay: true` only if the receiving system tolerates
-duplicate DNS events or performs deduplication. When enabled, HTTP batch replay
-is attempted for connection failures, HTTP 408/429, and HTTP 5xx, within the
-configured retry budget. Invalid requests such as HTTP 400 are not retried.
-A lost acknowledgment after server-side commit may result in duplicate delivery.
-Use unique event identifiers and receiver-side deduplication when needed.
-
-Per-sink cumulative delivery counters are available through
-`SinkDispatcher.GetCounters(Type)`. Counters are in memory; they are not a
-durable audit log or a metrics endpoint. Queue overflow and retry exhaustion
-are reported, but process crashes, forced shutdown, and permanently unavailable
-destinations can still cause data loss. The system provides **best-effort,
-bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
-
-## ClickHouse sink
-
-The optional `sinks.clickhouse` integration uses the official
-[Serilog.Sinks.ClickHouse](https://github.com/ClickHouse/Serilog.Sinks.ClickHouse)
-v2.3.0 package and its `IBatchedLogEventSink.EmitBatchAsync` API. The existing
-`SinkDispatcher` owns bounded queues, batch sizing and delivery accounting;
-the adapter calls the Serilog sink directly without creating a second batching
-queue or Serilog logger. The ClickHouse driver performs binary bulk inserts.
-
-The integration test uses ClickHouse 25.8. On ClickHouse 24.12, the native
-`JSON` column requires enabling `enable_json_type=1`; the default server
-configuration rejected its creation during CI validation. Validate the database
-version and JSON support before deploying.
-
-The target ClickHouse table is **managed externally**, and must exist before
-the first batch. The adapter uses the Serilog default columns
-(`timestamp`, `level`, `message`, `message_template`, `exception`,
-`properties`) plus query dimensions (`client_ip`, `q_name`, `q_type`,
-`response_code`, `response_type`) and a complete `payload_json` string.
-The native `properties` JSON column also contains these mapped DNS properties.
-
-Example DDL (verified against ClickHouse 25.8):
-
-```sql
-CREATE DATABASE IF NOT EXISTS dns;
-CREATE TABLE IF NOT EXISTS dns.events
-(
-    timestamp DateTime64(3, 'UTC'),
-    level LowCardinality(String),
-    message String,
-    message_template String,
-    exception Nullable(String),
-    properties JSON,
-    client_ip String,
-    q_name String,
-    q_type LowCardinality(String),
-    response_code LowCardinality(String),
-    response_type LowCardinality(String),
-    payload_json String
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(timestamp)
-ORDER BY (timestamp, q_name)
-TTL timestamp + INTERVAL 30 DAY;
-```
-
-Configure the connection through the official ClickHouse driver connection
-string, rather than a raw HTTP endpoint:
-
-```json
-{
-  "sinks": {
-    "maxQueueSize": 100000,
-    "clickhouse": {
-      "enabled": true,
-      "connectionString": "Host=clickhouse.example.com;Port=8443;Database=dns;Username=dns_ingest;Password=REPLACE_ME;Protocol=https",
-      "database": "dns",
-      "table": "events",
-      "batching": {
-        "batchSize": 1000,
-        "batchDelayMs": 1000
-      }
-    }
-  },
-  "pipeline": {}
-}
-```
-
-The connection string uses the official `ClickHouse.Driver` settings for HTTPS (`Protocol=https`) and authentication (`Username`/`Password`).
-Use a dedicated user with `INSERT` and table-existence inspection privileges,
-and protect the configuration because it contains credentials.
-
-**Whole-batch replay is not supported for this adapter.** The upstream Serilog
-batch interface lacks a cancellation-token parameter, so the adapter can check
-cancellation *before* a batch but cannot reliably interrupt a running insert.
-`allowBatchReplay: true` is explicitly rejected. Errors propagate to the
-dispatcher as unconfirmed deliveries, and forced shutdown cannot guarantee
-that an in-flight insert is interrupted. The bounded queue is volatile and
-does not provide durable spooling or exactly-once delivery.
-
-No automatic schema migration, separate Serilog batching queue or custom
-HTTP/JSONEachRow insert client is implemented.
-
 ## Configuration
 
 > Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
@@ -174,6 +65,16 @@ Provide JSON configuration similar to the following:
       "address": "syslog.example.com",
       "port": 6514,
       "protocol": "TLS"
+    },
+    "clickhouse": {
+      "enabled": false,
+      "connectionString": "Host=clickhouse.example.com;Port=8443;Database=dns;Username=dns_ingest;Password=REPLACE_ME;Protocol=https",
+      "database": "dns",
+      "table": "events",
+      "batching": {
+        "batchSize": 1000,
+        "batchDelayMs": 1000
+      }
     }
   },
   "pipeline": {
@@ -227,12 +128,15 @@ a retry budget.
 * `console` writes logs to standard output, which is useful for containerized deployments and debugging.
 * `file` writes logs to the configured local file path.
 * `http` sends batches to the configured endpoint using HTTP POST as newline-delimited JSON (NDJSON). HTTP records include the responding server's hostname.
+* `clickhouse` exports DNS events through the official [Serilog.Sinks.ClickHouse](https://github.com/ClickHouse/Serilog.Sinks.ClickHouse) adapter and ClickHouse driver. It requires an existing, externally managed table; it does not create or migrate the schema. The table must provide Serilog's `timestamp`, `level`, `message`, `message_template`, `exception` and `properties` columns, plus `client_ip`, `q_name`, `q_type`, `response_code`, `response_type` and `payload_json`. The last column preserves the complete DNS log as JSON text. Set `connectionString`, `database` and `table` as shown above; `Protocol=https` uses HTTPS, and credentials in the connection string must be protected. Use a dedicated account with insert and table-inspection permissions. The integration is tested against ClickHouse 25.8; older installations may require enabling support for the native `JSON` type. ClickHouse whole-batch replay is not supported: `allowBatchReplay: true` is rejected, and an in-flight insert cannot reliably be cancelled through the upstream Serilog batch API.
 * `syslog` exports logs through Syslog. Supported protocols are `UDP`, `TCP`, `TLS`, and `LOCAL`.
   * For normal host installations, prefer `LOCAL` and let the operating system's Syslog daemon, such as rsyslog or an equivalent implementation, handle remote forwarding, buffering, retry, and transport policy. The app intentionally does not try to duplicate those responsibilities. `LOCAL` is available on supported Unix-like hosts and ignores `address`.
   * In containers, prefer `console` when your platform already collects standard output. A sidecar or the platform's logging infrastructure can then handle forwarding and delivery policy. If that is not available or not desired, configure `UDP`, `TCP`, or `TLS` to send directly to a remote Syslog target.
   * For remote Syslog, `address` accepts an IP address or an FQDN. Use an FQDN for `TLS`, because the server certificate is validated against it.
   * An FQDN is resolved once the DNS server starts answering queries, not while the app loads. If resolution is temporarily unavailable, the Syslog sink retries in the background with capped exponential backoff and jitter until resolution succeeds or the sink is disposed. With `UDP`, the successfully resolved address is kept for the lifetime of the sink. If the Syslog server's IP address changes, restart Technitium DNS Server or reload the Log Exporter configuration so the target is resolved again. `TCP` and `TLS` resolve the name again whenever they reconnect.
   * For `TCP` and `TLS`, an ambiguous write failure may cause the current record to be retried even if the remote peer already received it. Direct remote Syslog therefore favors avoiding loss over avoiding duplicates.
+
+Each sink uses an independent bounded in-memory queue and configurable `batching` settings. The retry budget applies only where whole-batch replay is explicitly enabled; it is not a universal export timeout. File, console and Syslog sinks do not replay whole batches through the dispatcher, as an interrupted operation may already have delivered some records. HTTP replay is opt-in and may duplicate records when an acknowledgment is lost; HTTP 408/429, HTTP 5xx and connection failures are eligible for retry, but HTTP 400 is not. The dispatcher maintains in-memory delivery counters through `SinkDispatcher.GetCounters(Type)`, not a durable audit log or metrics endpoint. Delivery remains best-effort: queue overflow, crashes, failed destinations and forced shutdown may cause losses; exactly-once and guaranteed at-least-once delivery are not provided.
 
 Individual sink sections may be omitted entirely. An omitted sink is disabled. When a sink section is present, its sink-specific required values are validated only if that sink is enabled. For example, a disabled or omitted HTTP sink does not require an `endpoint`.
 
