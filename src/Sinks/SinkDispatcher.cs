@@ -507,6 +507,9 @@ namespace LogExporter.Sinks
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
                     using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
+                    using var attemptTimer = _timeProvider.CreateTimer(
+                        static state => ((CancellationTokenSource)state!).Cancel(),
+                        attemptCts, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                     if (_replayEnabled && _options.RetryTimeLimit > TimeSpan.Zero)
                     {
                         var remainingTime = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
@@ -516,9 +519,7 @@ namespace LogExporter.Sinks
                             return;
                         }
 
-                        using var attemptTimer = _timeProvider.CreateTimer(
-                            static state => ((CancellationTokenSource)state!).Cancel(),
-                            attemptCts, remainingTime, Timeout.InfiniteTimeSpan);
+                        attemptTimer.Change(remainingTime, Timeout.InfiniteTimeSpan);
                     }
 
                     try
