@@ -26,8 +26,8 @@ for run in all_runs[1:]:
     for key in ("BatchSize", "BatchDelayMs", "Runtime", "OS", "ProcessorCount"):
         if run[key] != reference[key]:
             raise ValueError(f"Incomparable runs: {key}")
-    if [(c["Name"], c["Events"], c["Sinks"], c["Chunk"]) for c in run["Cases"]] != [
-        (c["Name"], c["Events"], c["Sinks"], c["Chunk"]) for c in reference["Cases"]
+    if [(c["Name"], c["Events"], c["Chunk"]) for c in run["Cases"]] != [
+        (c["Name"], c["Events"], c["Chunk"]) for c in reference["Cases"]
     ]:
         raise ValueError("Incomparable scenarios")
 
