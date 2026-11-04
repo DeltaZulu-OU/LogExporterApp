@@ -2,17 +2,35 @@
 
 The separate MSTest suite owns mocked Serilog adapter contract tests.
 """
+import hashlib
 import json
+import os
 import re
+import subprocess
 import uuid
 
 import pytest
 import requests
 
-from conftest import RESULTS, probe, wait_until
+from conftest import RESULTS, ROOT, probe, wait_until
 
 
 CLICKHOUSE_URL = "http://127.0.0.1:18123/"
+# Independent expectations for each test. Empty files are intentional for
+# scenarios that must not insert rows.
+EXPECTED_ROW_COUNTS = {
+    "test_clickhouse_persists_live_dns_event": 1,
+    "test_clickhouse_preserves_authoritative_nxdomain": 1,
+    "test_clickhouse_disabled_does_not_capture_events": 0,
+    "test_clickhouse_invalid_replay_config_keeps_exporter_active": 0,
+}
+
+
+def source_commit():
+    return os.environ.get("E2E_SOURCE_COMMIT") or subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+
 
 
 def query(sql):
@@ -21,7 +39,7 @@ def query(sql):
     return response.text.strip()
 
 
-def export_table_evidence(table, test_name):
+def export_table_evidence(table, test_name, test_outcome):
     """Preserve the real query response before dropping a disposable test table.
 
     This is a raw ClickHouse JSONEachRow result, not reconstructed test data.
@@ -36,12 +54,16 @@ def export_table_evidence(table, test_name):
     )
     rows = [json.loads(line) for line in result.splitlines() if line.strip()]
     # A blank JSONL file is intentional evidence of a table with zero rows.
-    filename.write_text(result + "\n" if result else "", encoding="utf-8")
+    data = (result + "\n" if result else "").encode("utf-8")
+    filename.write_bytes(data)
     (directory / f"{safe_name}.manifest.json").write_text(
         json.dumps(
-            {"test": test_name, "table": f"dns.{table}",
+            {"test": test_name, "test_outcome": test_outcome,
+             "commit": source_commit(), "table": f"dns.{table}",
+             "expected_row_count": EXPECTED_ROW_COUNTS[test_name],
              "row_count": len(rows), "format": "JSONEachRow",
-             "data_file": filename.name},
+             "data_file": filename.name,
+             "sha256": hashlib.sha256(data).hexdigest()},
             indent=2,
         ) + "\n",
         encoding="utf-8",
@@ -70,7 +92,11 @@ def clickhouse_table(request):
         yield name
     finally:
         try:
-            export_table_evidence(name, request.node.name)
+            report = getattr(request.node, "rep_call", None)
+            # Teardown has not completed yet, so this is the pytest call-phase
+            # outcome, not a claim about the complete test lifecycle.
+            outcome = report.outcome if report is not None else "not_run"
+            export_table_evidence(name, request.node.name, outcome)
         finally:
             query(f"DROP TABLE IF EXISTS dns.{name}")
 

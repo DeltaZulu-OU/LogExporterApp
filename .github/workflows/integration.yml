@@ -21,6 +21,9 @@ concurrency:
 jobs:
   integration:
     runs-on: ubuntu-latest
+    env:
+      # For pull_request events GITHUB_SHA is the synthetic merge revision.
+      E2E_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     timeout-minutes: 25
     steps:
       - name: Checkout with Technitium submodules

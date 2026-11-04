@@ -20,12 +20,17 @@ workflow artifact:
 - `<test_name>.jsonl`: complete `SELECT * ... FORMAT JSONEachRow` output,
   including `payload_json` and all typed columns. An intentionally empty file
   indicates that no events were inserted (disabled/rejected configuration).
-- `<test_name>.manifest.json`: test name, temporary table, row count, result
-  format and associated data filename.
+- `<test_name>.manifest.json`: test name, temporary table, **expected and
+  actual row counts**, query-result format, data filename, SHA-256 of the raw
+  JSONL bytes, source Git commit and pytest call-phase outcome. The expected
+  count is predefined per test, not inferred from the returned data.
 
 Exports run during pytest fixture teardown, including when an individual
 test fails. Cleanup still drops the temporary table if evidence export fails.
-The E2E workflow validates file/manifest consistency on successful test runs.
+The E2E workflow validates file/manifest consistency, expected counts, digest,
+source commit and passing test outcomes on successful test runs. The recorded
+status describes the pytest call phase; fixture teardown may subsequently fail.
+SHA-256 detects changes to the saved JSONL bytes but is not CI attestation.
 These records use synthetic test domains and addresses and do not include
 production DNS traffic. Artifact retention is seven days.
 

@@ -187,3 +187,12 @@ def baseline(runtime):
 @pytest.fixture
 def unique_name():
     return f"run-{uuid.uuid4().hex[:16]}.e2e.test"
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Expose pytest's completed call-phase report to E2E fixture teardown."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        item.rep_call = report
