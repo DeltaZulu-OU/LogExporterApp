@@ -34,6 +34,18 @@ def test_benign_udp_exports_http_file_and_syslog(runtime, unique_name):
     assert 'rCode="NoError"' in packet
 
 
+def test_pinned_public_blocklist_examples(runtime):
+    # These names were present in StevenBlack/hosts on 2026-11-04.
+    # Their presence in a blocklist does not independently establish maliciousness.
+    for name in ("adsflame.com", "aircovid19virus.com"):
+        output = probe(name)
+        assert "status: NXDOMAIN" in output and "EDE: 15" in output
+        record = runtime.event(name)
+        assert record["responseCode"] == "NxDomain"
+        assert record["responseType"] == "Blocked"
+        assert any(e.get("errType") == "Blocked" for e in record["edns"])
+
+
 def test_benign_tcp_aaaa(runtime, unique_name):
     output = probe(unique_name, qtype="AAAA", tcp=True)
     assert "status: NOERROR" in output and "2001:db8::10" in output

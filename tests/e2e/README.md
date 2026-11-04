@@ -1,6 +1,6 @@
 # Live Technitium DNS end-to-end tests
 
-The E2E suite installs the actual release ZIP in a disposable Technitium DNS Server 15.6.2, sends dig queries over UDP and TCP, and validates HTTP NDJSON, file NDJSON, console NDJSON, and RFC 5424 UDP/TCP Syslog. A local blocklist fixture avoids test failures caused by third-party feeds.
+The E2E suite installs the actual release ZIP in a disposable Technitium DNS Server 15.6.2, sends dig queries over UDP and TCP, and validates HTTP NDJSON, file NDJSON, console NDJSON, and RFC 5424 UDP/TCP Syslog. A local blocklist fixture avoids test failures caused by third-party feeds. It includes synthetic domains and two pinned examples observed in StevenBlack/hosts (adsflame.com, aircovid19virus.com, checked 2026-11-04); list membership is not independent evidence of maliciousness.
 
 ## CI and local reproduction
 

@@ -1,3 +1,6 @@
 # Synthetic blocklist for deterministic Technitium integration tests.
 0.0.0.0 blocked.e2e.invalid
 0.0.0.0 noedns.e2e.invalid
+# Public-list snapshot examples: StevenBlack/hosts, data/StevenBlack/hosts (checked 2026-11-04).
+0.0.0.0 adsflame.com
+0.0.0.0 aircovid19virus.com
