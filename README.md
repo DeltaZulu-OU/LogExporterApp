@@ -113,14 +113,6 @@ opt into HTTP whole-batch replay by changing only the HTTP sink setting:
 }
 ```
 
-This opt-in permits retrying an entire batch after a transient failure. A
-request may have reached the receiver even when its acknowledgment was lost,
-so replay can produce duplicate records. The default two-second budget is
-shared across replay attempts; it is not a general timeout for HTTP when
-replay is disabled. File, console and syslog sinks do not replay entire
-batches through the dispatcher, even if their `batching` settings specify
-a retry budget.
-
 ### Sink options
 
 * `maxQueueSize` sets the capacity, in log entries, of the bounded processing stages and of each sink's independent ingress queue. A sink worker may additionally hold one in-flight batch while exporting or retrying. When a queue is full, new entries for that queue are dropped instead of allowing memory usage to grow without limit.
