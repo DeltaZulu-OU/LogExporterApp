@@ -569,7 +569,7 @@ namespace LogExporter.Sinks
             {
                 try
                 {
-                    _onLog?.Invoke($"{_sink.GetType().Name} export failed after retry budget; permanently lost {count} log entries.");
+                    _onLog?.Invoke($"{_sink.GetType().Name} batch delivery unconfirmed for {count} log entries; some records may have been delivered.");
                 }
                 catch { /* Reporting must not terminate worker. */ }
             }
