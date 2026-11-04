@@ -124,13 +124,15 @@ class Runtime:
 def runtime():
     password = os.environ.get("E2E_ADMIN_PASSWORD")
     package = os.environ.get("E2E_PACKAGE")
-    assert password and package, "E2E_ADMIN_PASSWORD and E2E_PACKAGE must be set"
+    assert password, "E2E_ADMIN_PASSWORD must be set"
+    assert package, "E2E_PACKAGE must be set"
     artifact = ROOT / package
     assert artifact.is_file(), f"Missing plugin ZIP: {artifact}"
     wait_until(lambda: requests.get(f"{API}/status", timeout=3).json().get("status") == "ok",
                "Technitium API readiness", timeout=90)
     login = requests.post(f"{API}/user/login", data={"user": "admin", "pass": password}, timeout=10).json()
-    assert login.get("status") == "ok" and login.get("token"), "Technitium authentication failed"
+    assert login.get("status") == "ok", "Technitium authentication failed"
+    assert login.get("token"), "Technitium login returned no token"
     server = Runtime(login["token"])
     server.api("zones/create", {"zone": "e2e.test", "type": "Primary"})
     for qtype, address in (("A", "192.0.2.10"), ("AAAA", "2001:db8::10")):
@@ -144,9 +146,10 @@ def runtime():
         response = server.api("apps/install?name=LogExporterApp",
                               files={"file": (artifact.name, fp, "application/zip")})
     apps = server.api("apps/list")["response"]["apps"]
-    assert any(app.get("name") == "LogExporterApp" and any(
-        entry.get("isQueryLogger") for entry in app.get("dnsApps", [])) for app in apps), (
-        f"Plugin not registered as a query logger: {response}")
+    installed = next((app for app in apps if app.get("name") == "LogExporterApp"), None)
+    assert installed is not None, f"Plugin not installed: {response}"
+    assert any(entry.get("isQueryLogger") for entry in installed.get("dnsApps", [])), (
+        f"Plugin does not register a query logger: {installed}")
     server.set_config(server.config())
     server.api("settings/forceUpdateBlockLists")
     wait_until(lambda: server.collector()["blocklist_hits"] > 0, "blocklist fetch", timeout=60)
