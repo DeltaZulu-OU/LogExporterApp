@@ -73,6 +73,9 @@ jobs:
       - name: Run live DNS E2E suite
         run: pytest -q tests/e2e/test_e2e.py tests/e2e/test_clickhouse.py --junitxml=tests/e2e/results/junit.xml
 
+      - name: Validate ClickHouse query-result evidence
+        run: python tests/e2e/verify_clickhouse_evidence.py
+
       - name: Capture Docker diagnostics
         if: always()
         run: |
