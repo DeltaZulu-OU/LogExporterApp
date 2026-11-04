@@ -36,14 +36,14 @@ def export_table_evidence(table, test_name):
     )
     rows = [json.loads(line) for line in result.splitlines() if line.strip()]
     # A blank JSONL file is intentional evidence of a table with zero rows.
-    filename.write_text(result + "\\n" if result else "", encoding="utf-8")
+    filename.write_text(result + "\n" if result else "", encoding="utf-8")
     (directory / f"{safe_name}.manifest.json").write_text(
         json.dumps(
             {"test": test_name, "table": f"dns.{table}",
              "row_count": len(rows), "format": "JSONEachRow",
              "data_file": filename.name},
             indent=2,
-        ) + "\\n",
+        ) + "\n",
         encoding="utf-8",
     )
 
