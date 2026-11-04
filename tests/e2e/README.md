@@ -1,6 +1,6 @@
 # Live Technitium DNS end-to-end tests
 
-The E2E suite installs the actual release ZIP in a disposable Technitium DNS Server 15.6.2, sends dig queries over UDP and TCP, and validates HTTP NDJSON, file NDJSON, console NDJSON, and RFC 5424 UDP/TCP Syslog, and the official Serilog ClickHouse sink against ClickHouse 25.8. A local blocklist fixture avoids test failures caused by third-party feeds. It includes synthetic domains and two pinned examples observed in StevenBlack/hosts (adsflame.com, aircovid19virus.com, checked 2026-11-04); list membership is not independent evidence of maliciousness.
+The E2E suite installs the actual release ZIP in a disposable Technitium DNS Server 15.6.2, sends dig queries over UDP and TCP, and validates HTTP NDJSON, file NDJSON, console NDJSON, and RFC 5424 UDP/TCP Syslog, and the official Serilog ClickHouse sink against ClickHouse 25.8. A local pinned fixture is imported into Technitium's blocked zone through its API, without asynchronous blocklist downloads or external feeds. It includes synthetic domains and two pinned examples observed in StevenBlack/hosts (adsflame.com, aircovid19virus.com, checked 2026-11-04); list membership is not independent evidence of maliciousness.
 
 ## CI and local reproduction
 
@@ -12,7 +12,7 @@ JUnit XML, sanitized collector state, container diagnostics, and the file sink o
 
 ## Scope
 
-Coverage includes ZIP installation and isQueryLogger registration, benign authoritative responses, synthetic blocked-domain NXDOMAIN with EDE 15, EDNS-disabled behavior, file/console/HTTP/Syslog delivery, HTTP batch limits, replay-enabled and replay-disabled HTTP 503, permanent HTTP 400, sink isolation, configuration reload and validation failure.
+Coverage includes ZIP installation and isQueryLogger registration, benign authoritative responses, local-fixture blocked-domain NXDOMAIN with EDE 15, EDNS-disabled behavior, file/console/HTTP/Syslog delivery, HTTP batch limits, replay-enabled and replay-disabled HTTP 503, permanent HTTP 400, sink isolation, configuration reload and validation failure.
 
 The blocked list tests demonstrate list-based blocking, not the maliciousness of any domain. Tests use a disposable DNS environment and do not contact any real malicious domains.
 
