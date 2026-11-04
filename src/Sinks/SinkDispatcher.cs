@@ -505,7 +505,8 @@ namespace LogExporter.Sinks
                     try
                     {
                         await _sink.ExportAsync(batch, attemptCts.Token).ConfigureAwait(false);
-                        attemptCts.Token.ThrowIfCancellationRequested();
+                        // A successful return is an acknowledgment. A deadline expiring
+                        // immediately afterward cannot retroactively invalidate it.
                         Interlocked.Add(ref _successfulEvents, batch.Count);
                         Interlocked.Increment(ref _successfulBatches);
                         return;
