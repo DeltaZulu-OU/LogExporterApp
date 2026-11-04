@@ -5,7 +5,6 @@ The separate MSTest suite owns mocked Serilog adapter contract tests.
 import json
 import re
 import uuid
-from pathlib import Path
 
 import pytest
 import requests
