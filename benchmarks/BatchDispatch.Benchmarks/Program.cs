@@ -26,7 +26,7 @@ foreach (var batchSize in new[] { 1, 64, 1000 })
     }
 
     var sortedDurations = samples.Select(x => x.Milliseconds).OrderBy(x => x).ToArray();
-    var sortedAllocations = samples.Select(x => x.AllocatedBytes).OrderBy(x => x).ToArray();
+    var sortedAllocations = samples.Select(x => (double)x.AllocatedBytes).OrderBy(x => x).ToArray();
     var ms = Median(sortedDurations);
     runs.Add(new CaseResult(batchSize, events, iterations, ms,
         events * 1000d / ms, Median(sortedAllocations),
