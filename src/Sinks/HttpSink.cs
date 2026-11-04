@@ -109,6 +109,8 @@ namespace LogExporter.Sinks
 
         // Opt-in is required because the receiver may have committed the POST before the
         // client observed a transport failure. Duplicate ingestion is possible on replay.
+        public bool IsReplayEnabled => _allowBatchReplay;
+
         public bool CanRetry(Exception exception)
         {
             if (!_allowBatchReplay)
