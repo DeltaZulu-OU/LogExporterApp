@@ -140,8 +140,7 @@ def runtime():
                                          "type": qtype, "ipAddress": address, "ttl": 60})
     server.api("settings/set", {"enableBlocking": "true", "blockingType": "NxDomain",
                                 "allowRecursion": "false", "logQueries": "true",
-                                "allowTxtBlockingReport": "true",
-                                "blockListUrls": "http://collector:8080/blocklist.txt"})
+                                "allowTxtBlockingReport": "true"})
     with artifact.open("rb") as fp:
         response = server.api("apps/install?name=LogExporterApp",
                               files={"file": (artifact.name, fp, "application/zip")})
@@ -151,8 +150,15 @@ def runtime():
     assert any(entry.get("isQueryLogger") for entry in installed.get("dnsApps", [])), (
         f"Plugin does not register a query logger: {installed}")
     server.set_config(server.config())
-    server.api("settings/forceUpdateBlockLists")
-    wait_until(lambda: server.collector()["blocklist_hits"] > 0, "blocklist fetch", timeout=60)
+    # Seed the real blocked zone from a pinned local fixture. This avoids relying
+    # on asynchronous block-list updates or container DNS resolution.
+    entries = []
+    for line in (Path(__file__).with_name("fixtures") / "blocklist.txt").read_text().splitlines():
+        fields = line.split("#", 1)[0].split()
+        if fields:
+            entries.append(fields[-1])
+    assert entries, "The blocked-zone fixture must contain domains"
+    server.api("blocked/import", {"blockedZones": ",".join(entries)})
     wait_until(lambda: "EDE: 15" in probe("blocked.e2e.invalid"),
                "blocked DNS response with EDE 15", timeout=60)
     yield server
