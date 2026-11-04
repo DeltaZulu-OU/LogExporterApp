@@ -25,6 +25,59 @@ It uses a bounded asynchronous pipeline: query logs are captured, optionally pro
 - Drops new entries when the pipeline is full and periodically logs the number of dropped records.
 - Drains pending logs during shutdown.
 
+## Batch delivery and retry semantics
+
+Each sink has an independent bounded in-memory queue. Configurable `batching` settings
+include `batchSize`, `batchDelayMs`, `retryTimeLimitMs`, `initialRetryDelayMs`
+and `maxRetryDelayMs`. The retry budget applies to sinks that explicitly opt into
+whole-batch replay; it does not impose a universal timeout on other sink implementations.
+
+**Whole-batch replay is disabled for file, console and syslog output** because they
+can partially deliver a batch before an exception. Syslog retains its own
+transport-level recovery and is not retried a second time by the dispatcher.
+
+HTTP whole-batch replay is **disabled by default**. Set
+`sinks.http.allowBatchReplay: true` only if the receiving system tolerates
+duplicate DNS events or performs deduplication. When enabled, HTTP batch replay
+is attempted for connection failures, HTTP 408/429, and HTTP 5xx, within the
+configured retry budget. Invalid requests such as HTTP 400 are not retried.
+A lost acknowledgment after server-side commit may result in duplicate delivery.
+Use unique event identifiers and receiver-side deduplication when needed.
+
+Per-sink cumulative delivery counters are available through
+`SinkDispatcher.GetCounters(Type)`. Counters are in memory; they are not a
+durable audit log or a metrics endpoint. Queue overflow and retry exhaustion
+are reported, but process crashes, forced shutdown, and permanently unavailable
+destinations can still cause data loss. The system provides **best-effort,
+bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
+
+## Batching performance validation
+
+The build workflow runs a self-checking dispatcher benchmark on Ubuntu/.NET 10
+(`benchmarks/BatchDispatch.Benchmarks`). It measures end-to-end in-memory
+enqueue-and-drain throughput for batch sizes 1, 64 and 1,000, with one warm-up
+and five measured trials per setting. GitHub Actions publishes a Markdown summary
+and JSON metrics as the `batch-dispatch-linux` artifact.
+
+The benchmark **fails CI** if any accepted event is missing, a sink batch
+exceeds the configured size, or dispatcher delivery/drop counters disagree.
+Throughput and allocation figures are diagnostic, not performance gates on
+shared runners. Batch size 1 is a configuration baseline rather than a measured
+comparison to the previous `master` implementation. These figures exclude
+DNS event construction, serialization, filesystem writes, HTTP and syslog I/O.
+
+A separate `Compare dispatcher against master` workflow measures the original
+and candidate dispatchers with matching single-sink configurations and publishes
+a `dispatcher-master-vs-pr` artifact. It excludes multi-sink fan-out and
+does not establish end-to-end production throughput. See
+[`benchmarks/BaselineComparison.Benchmarks/README.md`](benchmarks/BaselineComparison.Benchmarks/README.md)
+for the methodology, limitations and reproduction instructions.
+
+To reproduce on Linux, build the upstream TechnitiumLibrary dependency first,
+then run the benchmark project in Release configuration. The optional
+`--events`, `--iterations`, and `--output` flags control workload size,
+replications, and generated report paths.
+
 ## Configuration
 
 > Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
@@ -48,6 +101,14 @@ Provide JSON configuration similar to the following:
     "http": {
       "enabled": true,
       "endpoint": "https://collector.example.com/dns",
+      "allowBatchReplay": false,
+      "batching": {
+        "batchSize": 1000,
+        "batchDelayMs": 25,
+        "retryTimeLimitMs": 2000,
+        "initialRetryDelayMs": 50,
+        "maxRetryDelayMs": 500
+      },
       "headers": {
         "Authorization": "Bearer token"
       }
@@ -72,6 +133,36 @@ Provide JSON configuration similar to the following:
   }
 }
 ```
+
+The HTTP example explicitly disables whole-batch replay, matching the default.
+The optional `batching` object is configured independently on each enabled
+sink; if it is omitted, the defaults shown above apply. `batchSize` must be
+positive, `batchDelayMs` must be positive, `retryTimeLimitMs` may be zero,
+and `maxRetryDelayMs` must not be less than `initialRetryDelayMs`.
+
+For receivers that implement idempotent ingestion or tolerate duplicate events,
+opt into HTTP whole-batch replay by changing only the HTTP sink setting:
+
+```json
+{
+  "sinks": {
+    "http": {
+      "enabled": true,
+      "endpoint": "https://collector.example.com/dns",
+      "allowBatchReplay": true
+    }
+  },
+  "pipeline": {}
+}
+```
+
+This opt-in permits retrying an entire batch after a transient failure. A
+request may have reached the receiver even when its acknowledgment was lost,
+so replay can produce duplicate records. The default two-second budget is
+shared across replay attempts; it is not a general timeout for HTTP when
+replay is disabled. File, console and syslog sinks do not replay entire
+batches through the dispatcher, even if their `batching` settings specify
+a retry budget.
 
 ### Sink options
 

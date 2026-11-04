@@ -28,4 +28,32 @@ public sealed class AppConfigTests
             Assert.IsTrue(rejected);
         }
     }
+    [TestMethod]
+    public void InvalidEnabledSinkBatchingIsRejected()
+    {
+        var config = """{"sinks":{"http":{"enabled":true,"endpoint":"https://example.com/logs","batching":{"batchSize":0}}},"pipeline":{}}""";
+        Assert.ThrowsExactly<System.ComponentModel.DataAnnotations.ValidationException>(
+            () => AppConfig.Deserialize(config));
+    }
+
+    [TestMethod]
+    public void ValidSinkBatchingIsAccepted()
+    {
+        var config = """{"sinks":{"console":{"enabled":true,"batching":{"batchSize":500,"retryTimeLimitMs":1000}}},"pipeline":{}}""";
+        var parsed = AppConfig.Deserialize(config);
+        Assert.AreEqual(500, parsed.Sinks.ConsoleSinkConfig!.Batching!.BatchSize);
+        Assert.AreEqual(1000, parsed.Sinks.ConsoleSinkConfig.Batching.RetryTimeLimitMs);
+    }
+    [TestMethod]
+    public void HttpBatchReplayIsDisabledByDefaultAndRequiresOptIn()
+    {
+        var baseline = AppConfig.Deserialize(
+            """{"sinks":{"http":{"enabled":true,"endpoint":"https://example.com/logs"}},"pipeline":{}}""");
+        Assert.IsFalse(baseline.Sinks.HttpSinkConfig!.AllowBatchReplay);
+
+        var optedIn = AppConfig.Deserialize(
+            """{"sinks":{"http":{"enabled":true,"endpoint":"https://example.com/logs","allowBatchReplay":true}},"pipeline":{}}""");
+        Assert.IsTrue(optedIn.Sinks.HttpSinkConfig!.AllowBatchReplay);
+    }
+
 }

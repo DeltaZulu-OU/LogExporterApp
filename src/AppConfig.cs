@@ -65,8 +65,33 @@ namespace LogExporter
             Validator.ValidateObject(instance, ctx, validateAllProperties: true);
         }
 
+        private static void ValidateEnabledSinkBatching(SinkConfig sinks)
+        {
+            foreach (var feature in new FeatureBase?[]
+            {
+                sinks.ConsoleSinkConfig, sinks.FileSinkConfig,
+                sinks.HttpSinkConfig, sinks.SyslogSinkConfig
+            })
+            {
+                if (feature?.Enabled is not true || feature.Batching is null)
+                {
+                    continue;
+                }
+
+                ValidateObject(feature.Batching);
+
+                if (feature.Batching.MaxRetryDelayMs < feature.Batching.InitialRetryDelayMs)
+                {
+                    throw new ValidationException(
+                        "batching.maxRetryDelayMs must be >= initialRetryDelayMs.");
+                }
+            }
+        }
+
         private static void ValidateEnabledFeatures(AppConfig config)
         {
+            ValidateEnabledSinkBatching(config.Sinks);
+
             if (config.Sinks.FileSinkConfig?.Enabled is true)
             {
                 ValidateObject(config.Sinks.FileSinkConfig);
@@ -102,8 +127,33 @@ namespace LogExporter
             }
         }
     }
+    public class BatchSettings
+    {
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("batchSize")]
+        public int BatchSize { get; set; } = 1000;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("batchDelayMs")]
+        public int BatchDelayMs { get; set; } = 25;
+
+        [Range(0, int.MaxValue)]
+        [JsonPropertyName("retryTimeLimitMs")]
+        public int RetryTimeLimitMs { get; set; } = 2000;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("initialRetryDelayMs")]
+        public int InitialRetryDelayMs { get; set; } = 50;
+
+        [Range(1, int.MaxValue)]
+        [JsonPropertyName("maxRetryDelayMs")]
+        public int MaxRetryDelayMs { get; set; } = 500;
+    }
+
     public class FeatureBase
     {
+        [JsonPropertyName("batching")]
+        public BatchSettings? Batching { get; set; }
         [JsonPropertyName("enabled")]
         public bool Enabled { get; set; } = true;
     }
@@ -154,6 +204,9 @@ namespace LogExporter
 
         public class HttpSink : FeatureBase
         {
+            [JsonPropertyName("allowBatchReplay")]
+            public bool AllowBatchReplay { get; set; }
+
 
             [Required(ErrorMessage = "http.endpoint is required when HTTP logging is enabled.")]
             [Url]
