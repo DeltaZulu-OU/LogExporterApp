@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'benchmarks/BaselineComparison.Benchmarks/**'
+      - 'benchmarks/Common/**'
       - '.github/workflows/compare-dispatcher.yml'
   workflow_dispatch:
 
@@ -41,6 +42,7 @@ jobs:
         run: |
           mkdir -p baseline/benchmarks
           cp -R candidate/benchmarks/BaselineComparison.Benchmarks baseline/benchmarks/
+          cp -R candidate/benchmarks/Common baseline/benchmarks/
           echo "Baseline commit: $(git -C baseline rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
           echo "Candidate commit: $(git -C candidate rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
