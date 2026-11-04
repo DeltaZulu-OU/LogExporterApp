@@ -23,6 +23,7 @@
     <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="4.0.1" />
     <PackageReference Include="Nager.PublicSuffix" Version="3.8.0" />
     <PackageReference Include="Serilog.Sinks.SyslogMessages" Version="4.1.0" />
+    <PackageReference Include="Serilog.Sinks.ClickHouse" Version="2.3.0" />
   </ItemGroup>
 
   <ItemGroup>
