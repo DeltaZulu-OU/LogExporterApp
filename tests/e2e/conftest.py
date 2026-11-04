@@ -46,10 +46,13 @@ def matches(records, name, qtype="A"):
             and (r.get("question") or {}).get("questionType") == qtype]
 
 
-def probe(name, qtype="A", tcp=False, edns=True):
+def probe(name, qtype="A", tcp=False, edns=True, ecs=None):
     cmd = ["dig", "@127.0.0.1", "-p", "1053", name, qtype, "+tries=1", "+time=2",
            "+noall", "+comments", "+answer", "+additional"]
     cmd.append("+tcp" if tcp else "+notcp")
+    if ecs is not None:
+        assert edns, "ECS requires EDNS"
+        cmd.append(f"+subnet={ecs}")
     cmd.append("+edns=0" if edns else "+noedns")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=8, check=False)
     assert result.returncode == 0, f"dig failed: {result.stdout} {result.stderr}"
@@ -142,7 +145,11 @@ def runtime():
                                 "allowRecursion": "true",
                                 "allowRecursionOnlyForPrivateNetworks": "true",
                                 "logQueries": "true",
-                                "allowTxtBlockingReport": "true"})
+                                "allowTxtBlockingReport": "true",
+                                "enableEDnsClientSubnetSourceAddress": "true",
+                                # Host-to-container requests arrive through Docker bridge gateway.
+                                # Trust only that test-environment range, never arbitrary peers.
+                                "dnsReverseProxyNetworkACL": "172.16.0.0/12"})
     with artifact.open("rb") as fp:
         response = server.api("apps/install?name=LogExporterApp",
                               files={"file": (artifact.name, fp, "application/zip")})
