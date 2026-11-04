@@ -203,6 +203,7 @@ def test_edns_disabled_does_not_emit_optional_ede(runtime):
     output = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in output
     assert "EDE:" not in output
+    assert "EDE:" not in output
     record = runtime.event("blocked.e2e.invalid")
     assert record["responseType"] == "Blocked"
     assert record["edns"] == []
