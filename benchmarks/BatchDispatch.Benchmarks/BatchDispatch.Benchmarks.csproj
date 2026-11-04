@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/LogExporterApp.csproj" />
+    <Compile Include="../Common/CountingSink.cs" Link="CountingSink.cs" />
   </ItemGroup>
 </Project>
