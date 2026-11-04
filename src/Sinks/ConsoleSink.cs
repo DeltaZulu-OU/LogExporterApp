@@ -55,7 +55,7 @@ namespace LogForwarder.Sinks
             }
 
 #pragma warning disable RCS1261 // Resource can be disposed asynchronously
-            using var ms = _memoryManager.GetStream("ConsoleExport-Batch");
+            using var ms = _memoryManager.GetStream("ConsoleForward-Batch");
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
             NdjsonSerializer.WriteBatch(ms, logs);
 

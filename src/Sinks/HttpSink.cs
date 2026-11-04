@@ -138,7 +138,7 @@ namespace LogForwarder.Sinks
                 return;
             }
 #pragma warning disable RCS1261 // Resource can be disposed asynchronously
-            using var ms = _memoryManager.GetStream("HttpExport-Batch");
+            using var ms = _memoryManager.GetStream("HttpForward-Batch");
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
 
             // HTTP collectors need the responding cluster member in each event.
