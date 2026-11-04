@@ -525,9 +525,22 @@ namespace LogExporter.Sinks
                     {
                         ReportError(ex);
                         var remaining = _options.RetryTimeLimit - started.Elapsed;
-                        if (_retryPolicy?.IsReplayEnabled != true ||
-                            !_retryPolicy.CanRetry(ex) ||
-                            remaining <= TimeSpan.Zero)
+                        bool canRetry;
+                        try
+                        {
+                            canRetry = _retryPolicy?.IsReplayEnabled == true &&
+                                       remaining > TimeSpan.Zero &&
+                                       _retryPolicy.CanRetry(ex);
+                        }
+                        catch (Exception policyError)
+                        {
+                            // A faulty retry policy must not bypass delivery accounting.
+                            ReportError(policyError);
+                            RecordTerminalFailure(batch.Count);
+                            return;
+                        }
+
+                        if (!canRetry)
                         {
                             RecordTerminalFailure(batch.Count);
                             return;
