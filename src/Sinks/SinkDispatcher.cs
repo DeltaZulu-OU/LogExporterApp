@@ -453,30 +453,27 @@ namespace LogExporter.Sinks
 
             private async Task FillBatchUntilDelayAsync(List<LogEntry> batch)
             {
-                var delayTask = Task.Delay(_options.BatchDelay, _cancellation.Token);
+                // One cancelable availability wait at a time. The same deadline spans
+                // the whole partial batch rather than restarting after each event.
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
+                deadline.CancelAfter(_options.BatchDelay);
 
-                while (batch.Count < _options.BatchSize &&
-                       !_queue.Reader.Completion.IsCompleted)
+                try
                 {
-                    var waitToReadTask = _queue.Reader
-                        .WaitToReadAsync(_cancellation.Token)
-                        .AsTask();
-
-                    var completed = await Task
-                        .WhenAny(waitToReadTask, delayTask)
-                        .ConfigureAwait(false);
-
-                    if (completed == delayTask ||
-                        !await waitToReadTask.ConfigureAwait(false))
-                    {
-                        break;
-                    }
-
                     while (batch.Count < _options.BatchSize &&
-                           _queue.Reader.TryRead(out var entry))
+                           await _queue.Reader.WaitToReadAsync(deadline.Token).ConfigureAwait(false))
                     {
-                        batch.Add(entry);
+                        while (batch.Count < _options.BatchSize &&
+                               _queue.Reader.TryRead(out var entry))
+                        {
+                            batch.Add(entry);
+                        }
                     }
+                }
+                catch (OperationCanceledException) when (
+                    deadline.IsCancellationRequested && !_cancellation.IsCancellationRequested)
+                {
+                    // Partial-batch flush deadline reached; export what was collected.
                 }
             }
 
