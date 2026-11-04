@@ -256,6 +256,7 @@ namespace LogExporter.Sinks
 
             private readonly IOutputSink _sink;
             private readonly IBatchRetryPolicy? _retryPolicy;
+            private readonly bool _replayEnabled;
             private readonly SinkBatchOptions _options;
             private long _totalDroppedEvents;
             private long _successfulEvents;
@@ -281,6 +282,9 @@ namespace LogExporter.Sinks
             {
                 _sink = sink;
                 _retryPolicy = sink as IBatchRetryPolicy;
+                // Evaluate once during registration: a malformed policy fails before
+                // any events can be accepted, instead of losing an active batch.
+                _replayEnabled = _retryPolicy?.IsReplayEnabled == true;
                 _options = options;
                 _onError = onError;
                 _onLog = onLog;
@@ -487,7 +491,7 @@ namespace LogExporter.Sinks
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
                     using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
-                    if (_retryPolicy?.IsReplayEnabled == true && _options.RetryTimeLimit > TimeSpan.Zero)
+                    if (_replayEnabled && _options.RetryTimeLimit > TimeSpan.Zero)
                     {
                         var remainingTime = _options.RetryTimeLimit - started.Elapsed;
                         if (remainingTime <= TimeSpan.Zero)
@@ -525,9 +529,9 @@ namespace LogExporter.Sinks
                         bool canRetry;
                         try
                         {
-                            canRetry = _retryPolicy?.IsReplayEnabled == true &&
+                            canRetry = _replayEnabled &&
                                        remaining > TimeSpan.Zero &&
-                                       _retryPolicy.CanRetry(ex);
+                                       _retryPolicy!.CanRetry(ex);
                         }
                         catch (Exception policyError)
                         {
