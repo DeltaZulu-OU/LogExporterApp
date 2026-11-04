@@ -85,19 +85,19 @@ def test_clickhouse_persists_live_dns_event(runtime, unique_name, clickhouse_tab
     assert runtime.event(unique_name)["question"]["questionName"] == unique_name
 
 
-def test_clickhouse_preserves_blocking_evidence(runtime, clickhouse_table):
+def test_clickhouse_preserves_authoritative_nxdomain(runtime, clickhouse_table):
     enable_clickhouse(runtime, clickhouse_table)
     result = probe("blocked.e2e.invalid")
     assert "status: NXDOMAIN" in result
-    assert "EDE: 15" in result
+    assert "EDE:" not in result
 
     rows = wait_until(lambda: stored_rows(clickhouse_table, "blocked.e2e.invalid"),
                       "blocked query in ClickHouse", timeout=25)
     row = rows[0]
     assert row["response_code"] == "NxDomain"
-    assert row["response_type"] == "Blocked"
+    assert row["response_type"] == "Authoritative"
     payload = json.loads(row["payload_json"])
-    assert payload["responseType"] == "Blocked"
+    assert payload["responseType"] == "Authoritative"
     assert payload["question"]["questionName"] == "blocked.e2e.invalid"
     assert payload["edns"] == []
 
