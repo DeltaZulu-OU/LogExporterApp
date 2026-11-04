@@ -36,7 +36,15 @@ namespace LogExporter.Sinks
         private SinkWorker[] _workerSnapshot = Array.Empty<SinkWorker>();
         private readonly Dictionary<Type, SinkDeliveryCounters> _retiredCounters = new();
 
+        private readonly TimeProvider _timeProvider;
+        private readonly Func<double> _jitterSample;
         private bool _disposed;
+
+        public SinkDispatcher(TimeProvider? timeProvider = null, Func<double>? jitterSample = null)
+        {
+            _timeProvider = timeProvider ?? TimeProvider.System;
+            _jitterSample = jitterSample ?? Random.Shared.NextDouble;
+        }
 
         #endregion
 
@@ -101,7 +109,7 @@ namespace LogExporter.Sinks
 
                     _workers.Add(
                         sink.GetType(),
-                        new SinkWorker(sink, options, onError, onLog));
+                        new SinkWorker(sink, options, onError, onLog, _timeProvider, _jitterSample));
                     RefreshSnapshotLocked();
                 }
             }
@@ -254,6 +262,8 @@ namespace LogExporter.Sinks
         {
             private static readonly TimeSpan DropLogInterval = TimeSpan.FromSeconds(5);
 
+            private readonly TimeProvider _timeProvider;
+            private readonly Func<double> _jitterSample;
             private readonly IOutputSink _sink;
             private readonly IBatchRetryPolicy? _retryPolicy;
             private readonly bool _replayEnabled;
@@ -278,8 +288,12 @@ namespace LogExporter.Sinks
                 IOutputSink sink,
                 SinkBatchOptions options,
                 Action<Exception>? onError,
-                Action<string>? onLog)
+                Action<string>? onLog,
+                TimeProvider timeProvider,
+                Func<double> jitterSample)
             {
+                _timeProvider = timeProvider;
+                _jitterSample = jitterSample;
                 _sink = sink;
                 _retryPolicy = sink as IBatchRetryPolicy;
                 // Evaluate once during registration: a malformed policy fails before
@@ -460,7 +474,9 @@ namespace LogExporter.Sinks
                 // One cancelable availability wait at a time. The same deadline spans
                 // the whole partial batch rather than restarting after each event.
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
-                deadline.CancelAfter(_options.BatchDelay);
+                using var flushTimer = _timeProvider.CreateTimer(
+                    static state => ((CancellationTokenSource)state!).Cancel(),
+                    deadline, _options.BatchDelay, Timeout.InfiniteTimeSpan);
 
                 try
                 {
@@ -483,7 +499,7 @@ namespace LogExporter.Sinks
 
             private async Task ExportWithRetryAsync(List<LogEntry> batch)
             {
-                var started = System.Diagnostics.Stopwatch.StartNew();
+                var started = _timeProvider.GetTimestamp();
                 var delay = _options.InitialRetryDelay;
                 // Do not replay whole batches unless the target explicitly opts into replay.
                 // HTTP, append-only file, console and syslog may have partially committed work.
@@ -493,14 +509,16 @@ namespace LogExporter.Sinks
                     using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
                     if (_replayEnabled && _options.RetryTimeLimit > TimeSpan.Zero)
                     {
-                        var remainingTime = _options.RetryTimeLimit - started.Elapsed;
+                        var remainingTime = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
                         if (remainingTime <= TimeSpan.Zero)
                         {
                             RecordTerminalFailure(batch.Count);
                             return;
                         }
 
-                        attemptCts.CancelAfter(remainingTime);
+                        using var attemptTimer = _timeProvider.CreateTimer(
+                            static state => ((CancellationTokenSource)state!).Cancel(),
+                            attemptCts, remainingTime, Timeout.InfiniteTimeSpan);
                     }
 
                     try
@@ -525,7 +543,7 @@ namespace LogExporter.Sinks
                     catch (Exception ex)
                     {
                         ReportError(ex);
-                        var remaining = _options.RetryTimeLimit - started.Elapsed;
+                        var remaining = _options.RetryTimeLimit - _timeProvider.GetElapsedTime(started);
                         bool canRetry;
                         try
                         {
@@ -548,11 +566,11 @@ namespace LogExporter.Sinks
                         }
 
                         // Retry only an explicitly replay-safe batch, without overtaking it.
-                        var jitter = 0.75 + Random.Shared.NextDouble() * 0.5;
+                        var jitter = 0.75 + _jitterSample() * 0.5;
                         var wait = TimeSpan.FromMilliseconds(Math.Min(remaining.TotalMilliseconds,
                             delay.TotalMilliseconds * jitter));
                         Interlocked.Increment(ref _retriedAttempts);
-                        await Task.Delay(wait, _cancellation.Token).ConfigureAwait(false);
+                        await Task.Delay(wait, _timeProvider, _cancellation.Token).ConfigureAwait(false);
                         delay = TimeSpan.FromMilliseconds(Math.Min(_options.MaxRetryDelay.TotalMilliseconds,
                             delay.TotalMilliseconds * 2));
                     }
