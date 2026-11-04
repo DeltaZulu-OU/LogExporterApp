@@ -51,6 +51,17 @@ def test_pinned_fixture_public_blocked_examples(runtime):
         assert record["responseType"] == "Blocked"
 
 
+
+def test_edns_client_subnet_is_used_as_trusted_source_address(runtime, unique_name):
+    # The Docker host is allowed by dnsReverseProxyNetworkACL in this isolated
+    # environment. ECS source-address substitution is distinct from EDE.
+    subnet = "198.51.100.42/32"
+    output = probe(unique_name, ecs=subnet)
+    assert "status: NOERROR" in output
+    record = runtime.event(unique_name)
+    assert record["clientIp"] == "198.51.100.42"
+
+
 def test_benign_tcp_aaaa(runtime, unique_name):
     output = probe(unique_name, qtype="AAAA", tcp=True)
     assert "status: NOERROR" in output
