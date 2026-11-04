@@ -36,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y dnsutils
-          python -m pip install 'pytest==8.4.2' 'requests==2.32.5'
+          python -m pip install --only-binary=:all: 'pytest==8.4.2' 'requests==2.32.5'
 
       - name: Build TechnitiumLibrary
         run: dotnet build upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
