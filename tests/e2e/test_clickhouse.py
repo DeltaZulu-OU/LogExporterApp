@@ -3,12 +3,14 @@
 The separate MSTest suite owns mocked Serilog adapter contract tests.
 """
 import json
+import re
 import uuid
+from pathlib import Path
 
 import pytest
 import requests
 
-from conftest import probe, wait_until
+from conftest import RESULTS, probe, wait_until
 
 
 CLICKHOUSE_URL = "http://127.0.0.1:18123/"
@@ -20,8 +22,35 @@ def query(sql):
     return response.text.strip()
 
 
+def export_table_evidence(table, test_name):
+    """Preserve the real query response before dropping a disposable test table.
+
+    This is a raw ClickHouse JSONEachRow result, not reconstructed test data.
+    Synthetic test domains and addresses only; never export credentials.
+    """
+    directory = RESULTS / "clickhouse"
+    directory.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", test_name)
+    filename = directory / f"{safe_name}.jsonl"
+    result = query(
+        f"SELECT * FROM dns.{table} ORDER BY timestamp, q_name FORMAT JSONEachRow"
+    )
+    rows = [json.loads(line) for line in result.splitlines() if line.strip()]
+    # A blank JSONL file is intentional evidence of a table with zero rows.
+    filename.write_text(result + "\\n" if result else "", encoding="utf-8")
+    (directory / f"{safe_name}.manifest.json").write_text(
+        json.dumps(
+            {"test": test_name, "table": f"dns.{table}",
+             "row_count": len(rows), "format": "JSONEachRow",
+             "data_file": filename.name},
+            indent=2,
+        ) + "\\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
-def clickhouse_table():
+def clickhouse_table(request):
     name = "dns_e2e_" + uuid.uuid4().hex
     query("CREATE DATABASE IF NOT EXISTS dns")
     query(f"""CREATE TABLE dns.{name} (
@@ -41,7 +70,10 @@ def clickhouse_table():
     try:
         yield name
     finally:
-        query(f"DROP TABLE IF EXISTS dns.{name}")
+        try:
+            export_table_evidence(name, request.node.name)
+        finally:
+            query(f"DROP TABLE IF EXISTS dns.{name}")
 
 
 def enable_clickhouse(runtime, table):
