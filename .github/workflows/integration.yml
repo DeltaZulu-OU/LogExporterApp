@@ -1,0 +1,89 @@
+name: End-to-End Integration Tests
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout with Technitium submodules
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Install DNS probe and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dnsutils
+          python -m pip install 'pytest==8.4.2' 'requests==2.32.5'
+
+      - name: Build TechnitiumLibrary
+        run: dotnet build upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
+
+      - name: Build exporter
+        run: dotnet build src/LogExporterApp.csproj -c Release
+
+      - name: Package exactly as the release workflow does
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/LogExporterApp.csproj
+          $version = $project.Project.PropertyGroup.Version | Select-Object -First 1
+          ./.github/scripts/New-ReleasePackage.ps1 -AppName LogExporterApp -Version $version
+          "E2E_PACKAGE=release/LogExporterApp-$version.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Validate plugin package
+        run: |
+          python -c 'import os,zipfile; p=os.environ["E2E_PACKAGE"]; z=zipfile.ZipFile(p); names=set(z.namelist()); required={"LogExporterApp.dll","LogExporterApp.deps.json","dnsApp.config"}; assert required.issubset(names), (p, required-names); assert z.testzip() is None'
+
+      - name: Prepare isolated test environment
+        run: |
+          echo "E2E_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          mkdir -p tests/e2e/results
+
+      - name: Start Technitium and collectors
+        run: docker compose -f tests/e2e/compose.yml up --detach --wait --wait-timeout 120
+
+      - name: Run live DNS E2E suite
+        run: pytest -q tests/e2e/test_e2e.py --junitxml=tests/e2e/results/junit.xml
+
+      - name: Capture Docker diagnostics
+        if: always()
+        run: |
+          mkdir -p tests/e2e/results
+          docker compose -f tests/e2e/compose.yml ps > tests/e2e/results/compose-ps.txt 2>&1 || true
+          docker compose -f tests/e2e/compose.yml logs --no-color > tests/e2e/results/compose.log 2>&1 || true
+          curl --silent --max-time 5 http://127.0.0.1:18080/state > tests/e2e/results/collector-state.json || true
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-evidence
+          path: tests/e2e/results/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Destroy test environment
+        if: always()
+        run: docker compose -f tests/e2e/compose.yml down --volumes --remove-orphans
