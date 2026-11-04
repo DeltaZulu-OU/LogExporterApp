@@ -25,7 +25,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     public sealed class ConsoleSink : IOutputSink
     {
@@ -44,10 +44,10 @@ namespace LogExporter.Sinks
             // ADR: We intentionally do NOT dispose _stdout. The standard output stream is
             // owned by the process, not by this strategy. Disposing it here would break
             // all console output for the entire DNS server. Dispose only flips the flag
-            // so that subsequent ExportAsync calls become no-ops during shutdown.
+            // so that subsequent ForwardAsync calls become no-ops during shutdown.
             _disposed = true;
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             if (_disposed || logs.Count == 0 || token.IsCancellationRequested)
             {
@@ -55,7 +55,7 @@ namespace LogExporter.Sinks
             }
 
 #pragma warning disable RCS1261 // Resource can be disposed asynchronously
-            using var ms = _memoryManager.GetStream("ConsoleExport-Batch");
+            using var ms = _memoryManager.GetStream("ConsoleForward-Batch");
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
             NdjsonSerializer.WriteBatch(ms, logs);
 

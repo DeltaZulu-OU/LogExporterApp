@@ -50,20 +50,20 @@ jobs:
       - name: Build TechnitiumLibrary
         run: dotnet build upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
 
-      - name: Build exporter
-        run: dotnet build src/LogExporterApp.csproj -c Release
+      - name: Build forwarder
+        run: dotnet build src/LogForwarderApp.csproj -c Release
 
       - name: Package exactly as the release workflow does
         shell: pwsh
         run: |
-          [xml]$project = Get-Content src/LogExporterApp.csproj
+          [xml]$project = Get-Content src/LogForwarderApp.csproj
           $version = $project.Project.PropertyGroup.Version | Select-Object -First 1
-          ./.github/scripts/New-ReleasePackage.ps1 -AppName LogExporterApp -Version $version
-          "E2E_PACKAGE=release/LogExporterApp-$version.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ./.github/scripts/New-ReleasePackage.ps1 -AppName LogForwarderApp -Version $version
+          "E2E_PACKAGE=release/LogForwarderApp-$version.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Validate plugin package
         run: |
-          python -c 'import os,zipfile; p=os.environ["E2E_PACKAGE"]; z=zipfile.ZipFile(p); names=set(z.namelist()); required={"LogExporterApp.dll","LogExporterApp.deps.json","dnsApp.config","Serilog.Sinks.ClickHouse.dll","ClickHouse.Driver.dll","Serilog.dll"}; assert required.issubset(names), (p, required-names); assert z.testzip() is None'
+          python -c 'import os,zipfile; p=os.environ["E2E_PACKAGE"]; z=zipfile.ZipFile(p); names=set(z.namelist()); required={"LogForwarderApp.dll","LogForwarderApp.deps.json","dnsApp.config","Serilog.Sinks.ClickHouse.dll","ClickHouse.Driver.dll","Serilog.dll"}; assert required.issubset(names), (p, required-names); assert z.testzip() is None'
 
       - name: Prepare isolated test environment
         run: |

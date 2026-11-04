@@ -24,7 +24,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TechnitiumLibrary.Net.Dns;
 
-namespace LogExporter
+namespace LogForwarder
 {
     public class AppConfig
     {

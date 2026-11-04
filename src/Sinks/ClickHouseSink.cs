@@ -11,7 +11,7 @@ using Serilog.Sinks.ClickHouse.Configuration;
 using Serilog.Sinks.ClickHouse.Schema;
 using SerilogClickHouseSink = Serilog.Sinks.ClickHouse.ClickHouseSink;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     /// <summary>
     /// Adapts DNS query-log batches to the official Serilog ClickHouse sink.
@@ -54,7 +54,7 @@ namespace LogExporter.Sinks
             });
         }
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ArgumentNullException.ThrowIfNull(logs);

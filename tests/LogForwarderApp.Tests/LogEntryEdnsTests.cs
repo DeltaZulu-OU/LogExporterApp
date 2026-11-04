@@ -1,5 +1,5 @@
-using LogExporter;
-using LogExporter.Sinks;
+using LogForwarder;
+using LogForwarder.Sinks;
 using Serilog.Events;
 using System.Net;
 using System.Text.Json;
@@ -7,7 +7,7 @@ using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.EDnsOptions;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class LogEntryEdnsTests
@@ -145,7 +145,7 @@ public sealed class LogEntryEdnsTests
             "127.0.0.1", 514, "udp", Task.CompletedTask,
             _ => { }, _ => transport, _ => TimeSpan.Zero);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [
                 CreateEntry(EDnsExtendedDnsErrorCode.NotSupported, null, wireRoundTrip: true),
                 CreateEntry(EDnsExtendedDnsErrorCode.Blocked, "null", wireRoundTrip: true)

@@ -1,6 +1,6 @@
-using LogExporter.Pipeline;
+using LogForwarder.Pipeline;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class PipelineDispatcherTests

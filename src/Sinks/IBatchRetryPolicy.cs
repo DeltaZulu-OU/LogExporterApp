@@ -1,6 +1,6 @@
 using System;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     /// <summary>
     /// Explicit opt-in to replaying an entire failed batch. Implementations must guarantee

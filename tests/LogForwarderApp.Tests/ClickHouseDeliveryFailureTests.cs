@@ -1,8 +1,8 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 using Serilog.Core;
 using Serilog.Events;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 /// <summary>
 /// Fault-injection contract tests for the ClickHouse adapter and the existing

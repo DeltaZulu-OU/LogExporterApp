@@ -18,8 +18,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using DnsServerCore.ApplicationCommon;
-using LogExporter.Pipeline;
-using LogExporter.Sinks;
+using LogForwarder.Pipeline;
+using LogForwarder.Sinks;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -29,7 +29,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using TechnitiumLibrary.Net.Dns;
 
-namespace LogExporter
+namespace LogForwarder
 {
     public sealed class App : IDnsApplication, IDnsQueryLogger
     {
@@ -208,7 +208,7 @@ namespace LogExporter
                     EnrichLogsAsync(
                         transformChannel.Reader,
                         enrichedChannel.Writer),
-                    ExportLogsAsync(
+                    ForwardLogsAsync(
                         enrichedChannel.Reader));
 
                 Volatile.Write(
@@ -287,7 +287,7 @@ namespace LogExporter
                 .ConfigureAwait(false))
             {
                 _dnsServer?.WriteLog(
-                    $"Log exporter drain exceeded {ShutdownDrainTimeout.TotalSeconds:F0} seconds; aborting remaining sink work.");
+                    $"Log forwarder drain exceeded {ShutdownDrainTimeout.TotalSeconds:F0} seconds; aborting remaining sink work.");
             }
         }
 
@@ -347,8 +347,8 @@ namespace LogExporter
             }
         }
 
-        // Step 3: ExportLogsAsync – pipeline -> output
-        private async Task ExportLogsAsync(ChannelReader<LogEntry> enrichedReader)
+        // Step 3: ForwardLogsAsync – pipeline -> output
+        private async Task ForwardLogsAsync(ChannelReader<LogEntry> enrichedReader)
         {
             // ADR: Reuse this list buffer to avoid GC churn during high-volume logging.
             var batch = new List<LogEntry>(BULK_INSERT_COUNT);
@@ -616,7 +616,7 @@ namespace LogExporter
             {
                 var dropped = Interlocked.Exchange(ref _droppedCount, 0);
                 _dnsServer?.WriteLog(
-                    $"Log export queue full; dropped {dropped} entries over last {DropLogInterval.TotalSeconds:F0}s.");
+                    $"Log forwarding queue full; dropped {dropped} entries over last {DropLogInterval.TotalSeconds:F0}s.");
             }
         }
 
@@ -625,7 +625,7 @@ namespace LogExporter
         #region properties
 
         public string Description =>
-            "Allows exporting query logs to third party sinks. Supports exporting to FileSink, HTTP endpoint, and SyslogSink.";
+            "Processes and forwards DNS query logs to configurable sinks, including files, HTTP, Syslog, and ClickHouse.";
 
         #endregion properties
     }

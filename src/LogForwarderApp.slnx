@@ -6,14 +6,14 @@
   </Configurations>
 
   <Folder Name="/src/">
-    <Project Path="LogExporterApp.csproj" >
+    <Project Path="LogForwarderApp.csproj" >
       <Platform Solution="*|x64" Project="Any CPU" />
       <Platform Solution="*|x86" Project="Any CPU" />
     </Project>
   </Folder>
 
   <Folder Name="/tests/">
-    <Project Path="..\tests\LogExporterApp.Tests\LogExporterApp.Tests.csproj" />
+    <Project Path="..\tests\LogForwarderApp.Tests\LogForwarderApp.Tests.csproj" />
   </Folder>
 
   <Folder Name="/upstream/TechnitiumLibrary/">

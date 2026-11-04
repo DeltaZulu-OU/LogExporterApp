@@ -4,16 +4,16 @@
     <TargetFramework>net10.0</TargetFramework>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <Version>3.4.0</Version>
+    <Version>1.0.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <Company>Technitium</Company>
+    <Company>DeltaZulu OÜ</Company>
     <Product>Technitium DNS Server</Product>
     <Authors>Zafer Balkan</Authors>
-    <AssemblyName>LogExporterApp</AssemblyName>
-    <RootNamespace>LogExporter</RootNamespace>
-    <PackageProjectUrl>https://technitium.com/dns/</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/TechnitiumSoftware/DnsServer</RepositoryUrl>
-    <Description>Allows exporting query logs to third party sinks. It supports exporting to File, HTTP endpoint, and Syslog (UDP, TCP, TLS, and Local protocols).</Description>
+    <AssemblyName>LogForwarderApp</AssemblyName>
+    <RootNamespace>LogForwarder</RootNamespace>
+    <PackageProjectUrl>https://github.com/DeltaZulu-OU/LogForwarderApp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/DeltaZulu-OU/LogForwarderApp</RepositoryUrl>
+    <Description>Processes, enriches, and forwards DNS query logs to configurable output sinks.</Description>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <OutputType>Library</OutputType>
     <Nullable>enable</Nullable>

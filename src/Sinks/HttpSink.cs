@@ -28,7 +28,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.IO;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     public sealed class HttpSink : IOutputSink, IBatchRetryPolicy
     {
@@ -127,7 +127,7 @@ namespace LogExporter.Sinks
             return exception is System.IO.IOException or TimeoutException or TaskCanceledException;
         }
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             // ADR: Once disposed, this strategy must not attempt any I/O. The background
             // worker may still flush a few batches while shutdown is in progress. Treating
@@ -138,7 +138,7 @@ namespace LogExporter.Sinks
                 return;
             }
 #pragma warning disable RCS1261 // Resource can be disposed asynchronously
-            using var ms = _memoryManager.GetStream("HttpExport-Batch");
+            using var ms = _memoryManager.GetStream("HttpForward-Batch");
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
 
             // HTTP collectors need the responding cluster member in each event.

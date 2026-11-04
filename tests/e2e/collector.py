@@ -88,7 +88,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
 
 class TCPHandler(socketserver.StreamRequestHandler):
     def handle(self):
-        # Exporter uses RFC 6587 octet-counting, not newline delimiting.
+        # Forwarder uses RFC 6587 octet-counting, not newline delimiting.
         while True:
             length = bytearray()
             while True:

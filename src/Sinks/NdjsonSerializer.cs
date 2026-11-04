@@ -2,7 +2,7 @@
 using System.IO;
 using System.Text.Json;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     /// <summary>
     /// ADR: NDJSON serialization is shared by sinks that emit the JSON contract and must remain

@@ -1,14 +1,14 @@
 using DnsServerCore.ApplicationCommon;
-using LogExporter;
-using LogExporter.Pipeline;
-using LogExporter.Sinks;
+using LogForwarder;
+using LogForwarder.Pipeline;
+using LogForwarder.Sinks;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 internal static class TestFixtures
 {
@@ -120,7 +120,7 @@ internal static class TestFixtures
 
     internal static string CreateTempDirectory()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"LogExporterApp-{Guid.NewGuid():N}");
+        var path = Path.Combine(Path.GetTempPath(), $"LogForwarderApp-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
@@ -240,7 +240,7 @@ internal sealed class RecoveringSink : IOutputSink, IBatchRetryPolicy
         }
     }
 
-    public Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         var attempt = Interlocked.Increment(ref _attempts);
 
@@ -284,7 +284,7 @@ internal sealed class CountingSink : IOutputSink
 
     internal int Count => Volatile.Read(ref _count);
 
-    public Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         var count = Interlocked.Add(ref _count, logs.Count);
 
@@ -313,7 +313,7 @@ internal sealed class BlockingSink : IOutputSink
 
     internal int Count => Volatile.Read(ref _count);
 
-    public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+    public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
     {
         Interlocked.Add(ref _count, logs.Count);
         Started.TrySetResult();

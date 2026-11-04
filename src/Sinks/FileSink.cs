@@ -24,7 +24,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     public sealed class FileSink : IOutputSink
     {
@@ -69,7 +69,7 @@ namespace LogExporter.Sinks
 
         #region public
 
-        public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
+        public async Task ForwardAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {
             // ADR: FileSink writes must honor cancellation so server shutdown cannot block
             // on slow disks or large flush operations. Previously FlushAsync() was not
@@ -81,7 +81,7 @@ namespace LogExporter.Sinks
             }
 
 #pragma warning disable RCS1261 // Resource can be disposed asynchronously
-            using var ms = _memoryManager.GetStream("FileExport-Batch");
+            using var ms = _memoryManager.GetStream("FileForward-Batch");
 #pragma warning restore RCS1261 // Resource can be disposed asynchronously
             NdjsonSerializer.WriteBatch(ms, logs);
             ms.Position = 0;

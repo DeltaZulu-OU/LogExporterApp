@@ -1,6 +1,6 @@
 using System;
 
-namespace LogExporter.Sinks
+namespace LogForwarder.Sinks
 {
     /// <summary>Immutable configuration for one sink's in-memory delivery worker.</summary>
     public sealed record SinkBatchOptions

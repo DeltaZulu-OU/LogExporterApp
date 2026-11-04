@@ -1,9 +1,9 @@
-using LogExporter.Sinks;
+using LogForwarder.Sinks;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace LogExporterApp.Tests;
+namespace LogForwarderApp.Tests;
 
 [TestClass]
 public sealed class HttpSinkTests
@@ -27,7 +27,7 @@ public sealed class HttpSinkTests
 
         try
         {
-            await sink.ExportAsync(
+            await sink.ForwardAsync(
                 [TestFixtures.CreateLogEntry("http-failure.example")],
                 CancellationToken.None);
         }
@@ -38,7 +38,7 @@ public sealed class HttpSinkTests
 
         Assert.IsTrue(firstFailed);
 
-        await sink.ExportAsync(
+        await sink.ForwardAsync(
             [TestFixtures.CreateLogEntry("http-recovery.example")],
             CancellationToken.None);
 
