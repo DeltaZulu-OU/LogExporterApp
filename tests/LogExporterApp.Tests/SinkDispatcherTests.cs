@@ -288,6 +288,94 @@ public sealed class SinkDispatcherTests
         CollectionAssert.AreEqual(new[] { 2, 2, 1 }, sink.BatchSizes);
     }
 
+    [TestMethod]
+    public async Task ReplayDisabledSinkDoesNotInheritRetryDeadlineAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new ReplayDisabledSlowSink();
+        dispatcher.Add(sink, FastRetryOptions with { RetryTimeLimit = TimeSpan.FromMilliseconds(20) });
+
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(1, sink.Attempts);
+        Assert.AreEqual(1L, dispatcher.GetCounters(typeof(ReplayDisabledSlowSink)).SuccessfulEvents);
+        Assert.AreEqual(0L, dispatcher.GetCounters(typeof(ReplayDisabledSlowSink)).FailedEvents);
+    }
+
+    [TestMethod]
+    public async Task SuccessfulReturnAfterAttemptDeadlineRemainsSuccessfulAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new LateAcknowledgementSink();
+        dispatcher.Add(sink, FastRetryOptions with { RetryTimeLimit = TimeSpan.FromMilliseconds(20) });
+
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        Assert.AreEqual(1L, dispatcher.GetCounters(typeof(LateAcknowledgementSink)).SuccessfulEvents);
+        Assert.AreEqual(0L, dispatcher.GetCounters(typeof(LateAcknowledgementSink)).FailedEvents);
+    }
+
+    [TestMethod]
+    public async Task ThrowingRetryPolicyStillRecordsUnconfirmedBatchAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new ThrowingRetryPolicySink();
+        dispatcher.Add(sink, FastRetryOptions);
+
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        var counters = dispatcher.GetCounters(typeof(ThrowingRetryPolicySink));
+        Assert.AreEqual(1L, counters.FailedBatches);
+        Assert.AreEqual(1L, counters.FailedEvents);
+        Assert.AreEqual(1, sink.Attempts);
+    }
+
+    private sealed class ReplayDisabledSlowSink : IOutputSink, IBatchRetryPolicy
+    {
+        public int Attempts { get; private set; }
+        public bool IsReplayEnabled => false;
+        public bool CanRetry(Exception exception) => false;
+        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            Attempts++;
+            await Task.Delay(100, token);
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class LateAcknowledgementSink : IOutputSink, IBatchRetryPolicy
+    {
+        public bool CanRetry(Exception exception) => false;
+        public async Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            // The receiver reports success after the local deadline has elapsed.
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Simulates a late successful acknowledgment after cancellation.
+            }
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class ThrowingRetryPolicySink : IOutputSink, IBatchRetryPolicy
+    {
+        public int Attempts { get; private set; }
+        public bool CanRetry(Exception exception) => throw new InvalidOperationException("Policy failure.");
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            Attempts++;
+            throw new IOException("Transport failed.");
+        }
+        public void Dispose() { }
+    }
+
     private sealed class BatchSizeRecordingSink : IOutputSink
     {
         public List<int> BatchSizes { get; } = new();
