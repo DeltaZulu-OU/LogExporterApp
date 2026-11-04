@@ -38,16 +38,17 @@ def test_benign_udp_exports_http_file_and_syslog(runtime, unique_name):
     assert 'rCode="NoError"' in packet
 
 
-def test_pinned_fixture_nxdomain_examples(runtime):
+def test_pinned_fixture_public_blocked_examples(runtime):
     # These names were present in StevenBlack/hosts on 2026-11-04.
     # Their presence in a blocklist does not independently establish maliciousness.
+    # Technitium 15.6.2 classifies these as Blocked, unlike the synthetic
+    # .invalid names that resolve to authoritative NXDOMAIN in this harness.
     for name in ("adsflame.com", "aircovid19virus.com"):
         output = probe(name)
         assert "status: NXDOMAIN" in output
         record = runtime.event(name)
         assert record["responseCode"] == "NxDomain"
-        assert record["responseType"] == "Authoritative"
-        assert record["edns"] == []
+        assert record["responseType"] == "Blocked"
 
 
 def test_benign_tcp_aaaa(runtime, unique_name):
