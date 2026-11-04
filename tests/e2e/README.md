@@ -10,6 +10,22 @@ To reproduce, install Docker Compose, .NET 10, PowerShell, Python 3.12, dig, pyt
 
 JUnit XML, sanitized collector state, container diagnostics, and the file sink output are captured in the e2e-evidence artifact.
 
+## EDNS Client Subnet test configuration
+
+The live DNS harness explicitly sends `dig +edns=0` for EDNS-enabled
+queries, rather than depending on the installed `dig` version. The ECS
+regression test also sends `+subnet=198.51.100.42/32` and verifies that
+Technitium records the supplied client address.
+
+For this **isolated Docker E2E environment only**, Technitium has
+`enableEDnsClientSubnetSourceAddress=true` and trusts the Docker bridge
+gateway range through `dnsReverseProxyNetworkACL=172.16.0.0/12`. Production
+deployments must instead allow only the actual trusted proxy addresses;
+untrusted clients must not be permitted to spoof the source address using ECS.
+
+ECS and Extended DNS Errors (EDE) are different EDNS options. Enabling
+ECS source-address handling does not make blocked-zone responses emit EDE 15.
+
 ## Scope
 
 Coverage includes ZIP installation and isQueryLogger registration, benign authoritative responses, local-fixture blocked-domain NXDOMAIN, EDNS-disabled behavior, file/console/HTTP/Syslog delivery, HTTP batch limits, replay-enabled and replay-disabled HTTP 503, permanent HTTP 400, sink isolation, configuration reload and validation failure.
