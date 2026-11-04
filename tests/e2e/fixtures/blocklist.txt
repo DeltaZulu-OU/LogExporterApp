@@ -1,0 +1,3 @@
+# Synthetic blocklist for deterministic Technitium integration tests.
+0.0.0.0 blocked.e2e.invalid
+0.0.0.0 noedns.e2e.invalid
