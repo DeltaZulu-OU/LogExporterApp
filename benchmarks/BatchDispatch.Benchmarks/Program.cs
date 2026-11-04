@@ -12,8 +12,10 @@ const int defaultIterations = 5;
 var events = ReadInt("--events", defaultEvents);
 var iterations = ReadInt("--iterations", defaultIterations);
 var output = ReadString("--output", "benchmarks/results");
-if (events <= 0 || iterations <= 0)
-    throw new ArgumentOutOfRangeException(nameof(events), "Event count and iterations must be positive.");
+if (events <= 0)
+    throw new ArgumentException("--events must be positive.");
+if (iterations <= 0)
+    throw new ArgumentException("--iterations must be positive.");
 
 var runs = new List<CaseResult>();
 foreach (var batchSize in new[] { 1, 64, 1000 })
