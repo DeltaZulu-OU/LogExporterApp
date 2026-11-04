@@ -51,6 +51,26 @@ are reported, but process crashes, forced shutdown, and permanently unavailable
 destinations can still cause data loss. The system provides **best-effort,
 bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
 
+## Batching performance validation
+
+The PR build workflow runs a self-checking dispatcher benchmark on Ubuntu/.NET 10
+(`benchmarks/BatchDispatch.Benchmarks`). It measures end-to-end in-memory
+enqueue-and-drain throughput for batch sizes 1, 64 and 1,000, with one warm-up
+and five measured trials per setting. GitHub Actions publishes a Markdown summary
+and JSON metrics as the `batch-dispatch-linux` artifact.
+
+The benchmark **fails CI** if any accepted event is missing, a sink batch
+exceeds the configured size, or dispatcher delivery/drop counters disagree.
+Throughput and allocation figures are diagnostic, not performance gates on
+shared runners. Batch size 1 is a configuration baseline rather than a measured
+comparison to the previous `master` implementation. These figures exclude
+DNS event construction, serialization, filesystem writes, HTTP and syslog I/O.
+
+To reproduce on Linux, build the upstream TechnitiumLibrary dependency first,
+then run the benchmark project in Release configuration. The optional
+`--events`, `--iterations`, and `--output` flags control workload size,
+replications, and generated report paths.
+
 ## Configuration
 
 > Note that the configuration differs from the `LogExporterApp` in the Technitium DNS Server App Store. Therefore, you cannot use the same configuration.
