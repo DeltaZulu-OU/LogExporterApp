@@ -53,7 +53,7 @@ bounded delivery**, not exactly-once or guaranteed at-least-once delivery.
 
 ## Batching performance validation
 
-The PR build workflow runs a self-checking dispatcher benchmark on Ubuntu/.NET 10
+The build workflow runs a self-checking dispatcher benchmark on Ubuntu/.NET 10
 (`benchmarks/BatchDispatch.Benchmarks`). It measures end-to-end in-memory
 enqueue-and-drain throughput for batch sizes 1, 64 and 1,000, with one warm-up
 and five measured trials per setting. GitHub Actions publishes a Markdown summary
@@ -65,6 +65,13 @@ Throughput and allocation figures are diagnostic, not performance gates on
 shared runners. Batch size 1 is a configuration baseline rather than a measured
 comparison to the previous `master` implementation. These figures exclude
 DNS event construction, serialization, filesystem writes, HTTP and syslog I/O.
+
+A separate `Compare dispatcher against master` workflow measures the original
+and candidate dispatchers with matching single-sink configurations and publishes
+a `dispatcher-master-vs-pr` artifact. It excludes multi-sink fan-out and
+does not establish end-to-end production throughput. See
+[`benchmarks/BaselineComparison.Benchmarks/README.md`](benchmarks/BaselineComparison.Benchmarks/README.md)
+for the methodology, limitations and reproduction instructions.
 
 To reproduce on Linux, build the upstream TechnitiumLibrary dependency first,
 then run the benchmark project in Release configuration. The optional
@@ -94,6 +101,14 @@ Provide JSON configuration similar to the following:
     "http": {
       "enabled": true,
       "endpoint": "https://collector.example.com/dns",
+      "allowBatchReplay": false,
+      "batching": {
+        "batchSize": 1000,
+        "batchDelayMs": 25,
+        "retryTimeLimitMs": 2000,
+        "initialRetryDelayMs": 50,
+        "maxRetryDelayMs": 500
+      },
       "headers": {
         "Authorization": "Bearer token"
       }
@@ -118,6 +133,36 @@ Provide JSON configuration similar to the following:
   }
 }
 ```
+
+The HTTP example explicitly disables whole-batch replay, matching the default.
+The optional `batching` object is configured independently on each enabled
+sink; if it is omitted, the defaults shown above apply. `batchSize` must be
+positive, `batchDelayMs` must be positive, `retryTimeLimitMs` may be zero,
+and `maxRetryDelayMs` must not be less than `initialRetryDelayMs`.
+
+For receivers that implement idempotent ingestion or tolerate duplicate events,
+opt into HTTP whole-batch replay by changing only the HTTP sink setting:
+
+```json
+{
+  "sinks": {
+    "http": {
+      "enabled": true,
+      "endpoint": "https://collector.example.com/dns",
+      "allowBatchReplay": true
+    }
+  },
+  "pipeline": {}
+}
+```
+
+This opt-in permits retrying an entire batch after a transient failure. A
+request may have reached the receiver even when its acknowledgment was lost,
+so replay can produce duplicate records. The default two-second budget is
+shared across replay attempts; it is not a general timeout for HTTP when
+replay is disabled. File, console and syslog sinks do not replay entire
+batches through the dispatcher, even if their `batching` settings specify
+a retry budget.
 
 ### Sink options
 
