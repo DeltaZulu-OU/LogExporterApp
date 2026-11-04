@@ -333,6 +333,46 @@ public sealed class SinkDispatcherTests
         Assert.AreEqual(1, sink.Attempts);
     }
 
+    [TestMethod]
+    public async Task RepeatedPartialBatchesFlushWithoutDanglingReadWaitsAsync()
+    {
+        using var dispatcher = new SinkDispatcher();
+        using var sink = new PartialFlushRecordingSink();
+        dispatcher.Add(sink, FastRetryOptions with
+        {
+            BatchSize = 4,
+            BatchDelay = TimeSpan.FromMilliseconds(20)
+        });
+
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await sink.FirstFlush.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
+        await sink.SecondFlush.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+        await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
+
+        CollectionAssert.AreEqual(new[] { 1, 1 }, sink.BatchSizes);
+    }
+
+    private sealed class PartialFlushRecordingSink : IOutputSink
+    {
+        public List<int> BatchSizes { get; } = new();
+        public TaskCompletionSource FirstFlush { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondFlush { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task ExportAsync(IReadOnlyList<LogExporter.LogEntry> logs, CancellationToken token)
+        {
+            BatchSizes.Add(logs.Count);
+            if (BatchSizes.Count == 1)
+                FirstFlush.TrySetResult();
+            else if (BatchSizes.Count == 2)
+                SecondFlush.TrySetResult();
+            return Task.CompletedTask;
+        }
+        public void Dispose() { }
+    }
+
     private sealed class ReplayDisabledSlowSink : IOutputSink, IBatchRetryPolicy
     {
         public int Attempts { get; private set; }
