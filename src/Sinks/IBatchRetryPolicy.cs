@@ -8,6 +8,9 @@ namespace LogExporter.Sinks
     /// </summary>
     public interface IBatchRetryPolicy
     {
+        /// <summary>Whether this sink explicitly permits whole-batch replay.</summary>
+        bool IsReplayEnabled => true;
+
         bool CanRetry(Exception exception);
     }
 }
