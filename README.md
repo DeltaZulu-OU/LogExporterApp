@@ -27,7 +27,9 @@ It uses a bounded asynchronous pipeline: query log events are received, optional
 
 ## Renaming and upgrade notes
 
-The application, assembly, project, solution, and release package are named **LogForwarderApp** beginning with version **4.0.0**. The previous assembly/package identity is not retained. Install the new ZIP as a new Technitium application and transfer the existing JSON configuration explicitly; do not assume that Technitium migrates installed application names or configurations automatically. Remove the previous application after verifying the replacement and its sinks to avoid duplicate logging. The configuration schema and delivery behavior are unchanged by this rename.
+**Renamed on 5 November 2026:** This independently maintained application was renamed from `LogExporterApp` to **`LogForwarderApp`** to distinguish it from Technitium DNS Server's built-in/App Store **Log Exporter App**. The version numbering restarts at **1.0.0** under the new application identity; this is not a downgrade of the previous DeltaZulu releases. The rename and GUI update risk were discussed with Shreyas Zare in [Technitium DNS Server discussion #2203](https://github.com/TechnitiumSoftware/DnsServer/discussions/2203).
+
+**Important — do not use the GUI Update button on the old `LogExporterApp` installation.** The old application name overlaps with the Technitium-provided Log Exporter App, so an update from the GUI may select the upstream application and replace the independently maintained version, potentially disrupting configuration or delivery. The renamed app uses a distinct application/assembly/package identity. Install `LogForwarderApp-1.0.0.zip` as a separate application, explicitly transfer the existing JSON configuration, verify configured sinks, and then remove the old instance to avoid duplicate logs. Technitium does not automatically migrate the old application identity or configuration. The configuration schema and log delivery behavior are otherwise unchanged by the rename.
 
 ## Configuration
 
