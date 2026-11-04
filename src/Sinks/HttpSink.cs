@@ -30,11 +30,12 @@ using Microsoft.IO;
 
 namespace LogExporter.Sinks
 {
-    public sealed class HttpSink : IOutputSink
+    public sealed class HttpSink : IOutputSink, IBatchRetryPolicy
     {
         #region variables
 
         private readonly Uri _endpoint;
+        private readonly bool _allowBatchReplay;
         private readonly HttpClient _httpClient;
         private static readonly string Hostname = Dns.GetHostName();
         private static readonly JsonSerializerOptions HttpSerializerOptions = CreateHttpSerializerOptions();
@@ -57,7 +58,7 @@ namespace LogExporter.Sinks
         /// scheme here reports the mistake when the configuration is loaded. The client is disposed
         /// before throwing because a failed constructor leaves no instance for the caller to dispose.
         /// </remarks>
-        public HttpSink(string endpoint, Dictionary<string, string?>? headers = null)
+        public HttpSink(string endpoint, Dictionary<string, string?>? headers = null, bool allowBatchReplay = false)
         {
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
@@ -67,6 +68,7 @@ namespace LogExporter.Sinks
             }
 
             _endpoint = uri;
+            _allowBatchReplay = allowBatchReplay;
             _httpClient = new HttpClient();
 
             if (headers == null)
@@ -104,6 +106,26 @@ namespace LogExporter.Sinks
         #endregion IDisposable
 
         #region public
+
+        // Opt-in is required because the receiver may have committed the POST before the
+        // client observed a transport failure. Duplicate ingestion is possible on replay.
+        public bool IsReplayEnabled => _allowBatchReplay;
+
+        public bool CanRetry(Exception exception)
+        {
+            if (!_allowBatchReplay)
+                return false;
+
+            if (exception is HttpRequestException http)
+            {
+                if (http.StatusCode is null)
+                    return true; // Connection failure or ambiguous acknowledgment.
+                var status = (int)http.StatusCode.Value;
+                return status == 408 || status == 429 || status >= 500;
+            }
+
+            return exception is System.IO.IOException or TimeoutException or TaskCanceledException;
+        }
 
         public async Task ExportAsync(IReadOnlyList<LogEntry> logs, CancellationToken token)
         {

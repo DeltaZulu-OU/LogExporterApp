@@ -1,0 +1,79 @@
+name: Compare dispatcher against master
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'benchmarks/BaselineComparison.Benchmarks/**'
+      - 'benchmarks/Common/**'
+      - '.github/workflows/compare-dispatcher.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-linux:
+    name: Master vs PR dispatcher (diagnostic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout original master baseline
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'master' }}
+          path: baseline
+          submodules: recursive
+
+      - name: Checkout PR implementation
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          submodules: recursive
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Use identical benchmark source in both revisions
+        run: |
+          mkdir -p baseline/benchmarks
+          cp -R candidate/benchmarks/BaselineComparison.Benchmarks baseline/benchmarks/
+          cp -R candidate/benchmarks/Common baseline/benchmarks/
+          echo "Baseline commit: $(git -C baseline rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Candidate commit: $(git -C candidate rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build original master dispatcher with baseline harness
+        run: |
+          dotnet build baseline/upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
+          dotnet build baseline/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release -p:Baseline=true
+
+      - name: Build candidate dispatcher with identical harness
+        run: |
+          dotnet build candidate/upstream/TechnitiumLibrary/TechnitiumLibrary.Net/TechnitiumLibrary.Net.csproj -c Release
+          dotnet build candidate/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release
+
+      - name: Run alternating baseline/candidate sequence (A-B-B-A)
+        shell: bash
+        run: |
+          mkdir -p artifacts/raw
+          dotnet run --project baseline/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release --no-build --no-restore -p:Baseline=true -- --events 100000 --iterations 7 --output artifacts/raw/master-1.json --label master-1
+          dotnet run --project candidate/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release --no-build --no-restore -- --events 100000 --iterations 7 --output artifacts/raw/pr-1.json --label pr-1
+          dotnet run --project candidate/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release --no-build --no-restore -- --events 100000 --iterations 7 --output artifacts/raw/pr-2.json --label pr-2
+          dotnet run --project baseline/benchmarks/BaselineComparison.Benchmarks/BaselineComparison.Benchmarks.csproj -c Release --no-build --no-restore -p:Baseline=true -- --events 100000 --iterations 7 --output artifacts/raw/master-2.json --label master-2
+
+      - name: Compare matching scenarios
+        run: |
+          python3 candidate/benchmarks/BaselineComparison.Benchmarks/compare.py --baseline artifacts/raw/master-1.json artifacts/raw/master-2.json --candidate artifacts/raw/pr-1.json artifacts/raw/pr-2.json --output artifacts
+          cat artifacts/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw measurements and comparison
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dispatcher-master-vs-pr
+          path: artifacts/
+          if-no-files-found: warn

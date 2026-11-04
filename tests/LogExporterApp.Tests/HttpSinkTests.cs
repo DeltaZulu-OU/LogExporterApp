@@ -45,6 +45,25 @@ public sealed class HttpSinkTests
         await server.WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
     }
 
+    [TestMethod]
+    public void ReplayIsOptInAndLimitedToTransientHttpFailures()
+    {
+        using var defaultSink = new HttpSink("https://example.com/logs");
+        using var retrySink = new HttpSink("https://example.com/logs", allowBatchReplay: true);
+
+        Assert.IsFalse(defaultSink.CanRetry(new HttpRequestException("Unavailable",
+            null, HttpStatusCode.ServiceUnavailable)));
+        Assert.IsTrue(retrySink.CanRetry(new HttpRequestException("Unavailable",
+            null, HttpStatusCode.ServiceUnavailable)));
+        Assert.IsTrue(retrySink.CanRetry(new HttpRequestException("Throttled",
+            null, HttpStatusCode.TooManyRequests)));
+        Assert.IsTrue(retrySink.CanRetry(new HttpRequestException("Disconnected")));
+        Assert.IsTrue(retrySink.CanRetry(new TaskCanceledException("Client timeout")));
+        Assert.IsFalse(retrySink.CanRetry(new HttpRequestException("Bad request",
+            null, HttpStatusCode.BadRequest)));
+        Assert.IsFalse(retrySink.CanRetry(new InvalidOperationException("Serialization failure")));
+    }
+
     private static async Task ServeHttpResponseAsync(
         TcpListener listener,
         string status)
