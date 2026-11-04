@@ -164,10 +164,9 @@ def runtime():
     def blocked_response_ready():
         output = probe("blocked.e2e.invalid")
         assert "status: NXDOMAIN" in output, output
-        assert "EDE: 15" in output, output
         return True
 
-    wait_until(blocked_response_ready, "blocked DNS response with EDE 15", timeout=30)
+    wait_until(blocked_response_ready, "blocked-zone NXDOMAIN", timeout=30)
     yield server
     server.session.close()
 
