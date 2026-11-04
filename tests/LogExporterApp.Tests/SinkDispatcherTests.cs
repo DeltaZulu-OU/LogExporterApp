@@ -130,7 +130,7 @@ public sealed class SinkDispatcherTests
         var terminalMessages = 0;
         dispatcher.Add(sink, FastRetryOptions with { RetryTimeLimit = TimeSpan.FromMilliseconds(30) },
             _ => Interlocked.Increment(ref errors),
-            message => { if (message.Contains("permanently lost")) Interlocked.Increment(ref terminalMessages); });
+            message => { if (message.Contains("delivery unconfirmed")) Interlocked.Increment(ref terminalMessages); });
 
         await dispatcher.DispatchAsync(TestFixtures.CreateBatch(1), CancellationToken.None);
         await dispatcher.DrainAsync().WaitAsync(TimeSpan.FromSeconds(2), TestContext.CancellationToken);
