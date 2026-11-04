@@ -17,5 +17,8 @@ internal sealed class CountingSink : IOutputSink
         return Task.CompletedTask;
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        // The counting sink has no owned resources to release.
+    }
 }
